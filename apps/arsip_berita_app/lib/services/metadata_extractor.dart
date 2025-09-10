@@ -32,10 +32,14 @@ class ExtractedMetadata {
 
 class MetadataExtractor {
   Future<ExtractedMetadata?> fetch(String url) async {
-    final res = await http.get(Uri.parse(url));
+    var fixedUrl = url.trim();
+    if (fixedUrl.startsWith('htps://')) {
+      fixedUrl = fixedUrl.replaceFirst('htps://', 'https://');
+    }
+    final res = await http.get(Uri.parse(fixedUrl));
     if (res.statusCode < 200 || res.statusCode >= 300) return null;
     final doc = html_parser.parse(res.body);
-    return _extract(doc, res.request?.url.toString() ?? url);
+    return _extract(doc, res.request?.url.toString() ?? fixedUrl);
   }
 
   ExtractedMetadata _extract(dom.Document doc, String baseUrl) {
