@@ -9,24 +9,27 @@ class ThemeController extends ChangeNotifier {
     init();
   }
 
+  Color? _baseAccent;
+  Color? _baseAccent2;
+
   Future<void> init() async {
-    final prefs = await SharedPreferences.getInstance();
-    isDark = prefs.getBool('isDark') ?? false;
+    isDark = false;
     _apply();
     notifyListeners();
   }
 
-  void setDark(bool v) async {
-    isDark = v;
-    _apply();
-    notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    prefs.setBool('isDark', v);
+  void setDark(bool v) {
+    // Do nothing
   }
 
-  void toggle() => setDark(!isDark);
+  void toggle() {
+    // Do nothing
+  }
 
   void _apply() {
+    _baseAccent ??= DS.accent;
+    _baseAccent2 ??= DS.accent2;
+
     if (!isDark) {
       // Light scheme
       DS.bg = const Color(0xFFF4F6F8);
@@ -36,6 +39,8 @@ class ThemeController extends ChangeNotifier {
       DS.text = const Color(0xFF0F172A);
       DS.textDim = const Color(0xFF475569);
       // accents keep from loader; ensure lite variants
+      DS.accent = _baseAccent!;
+      DS.accent2 = _baseAccent2!;
       DS.accentLite = DS.accent.withOpacity(0.2);
       DS.accent2Lite = DS.accent2.withOpacity(0.2);
     } else {
@@ -47,8 +52,8 @@ class ThemeController extends ChangeNotifier {
       DS.text = const Color(0xFFE5E7EB);
       DS.textDim = const Color(0xFF9CA3AF);
       // Accents slightly brighter on dark
-      DS.accent = _ensureContrast(DS.accent, lightOnDark: true);
-      DS.accent2 = _ensureContrast(DS.accent2, lightOnDark: true);
+      DS.accent = _ensureContrast(_baseAccent!, lightOnDark: true);
+      DS.accent2 = _ensureContrast(_baseAccent2!, lightOnDark: true);
       DS.accentLite = DS.accent.withOpacity(0.2);
       DS.accent2Lite = DS.accent2.withOpacity(0.2);
     }

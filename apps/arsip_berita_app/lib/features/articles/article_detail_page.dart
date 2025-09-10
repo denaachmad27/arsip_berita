@@ -44,7 +44,6 @@ class _ArticleDetailPageState extends State<ArticleDetailPage> {
       body: UiScaffold(
         title: 'Detail Artikel',
         actions: [
-          InkWell(onTap: () { ThemeController.instance.toggle(); }, borderRadius: BorderRadius.circular(10), child: Padding(padding: const EdgeInsets.all(8), child: Icon(Icons.dark_mode, color: DS.textDim))),
         ],
         child: PageContainer(child: ListView(children: [
           UiCard(

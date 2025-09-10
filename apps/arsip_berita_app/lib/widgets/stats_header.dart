@@ -1,3 +1,4 @@
+import 'package:arsip_berita_app/ui/design.dart';
 import 'package:flutter/material.dart';
 import '../ui/theme.dart';
 
@@ -29,11 +30,12 @@ class _StatTile extends StatelessWidget {
       'month' => inherited.thisMonth,
       _ => inherited.mediaCount,
     };
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: DS.surface,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFE5E7EB)),
+        border: Border.all(color: DS.border),
       ),
       padding: const EdgeInsets.all(Spacing.lg),
       child: Row(children: [
@@ -44,8 +46,8 @@ class _StatTile extends StatelessWidget {
         ),
         const SizedBox(width: Spacing.md),
         Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(label, style: Theme.of(context).textTheme.bodyMedium),
-          Text('$value', style: Theme.of(context).textTheme.titleLarge),
+          Text(label, style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: isDark ? Colors.white70 : null)),
+          Text('$value', style: Theme.of(context).textTheme.titleLarge?.copyWith(color: isDark ? Colors.white : null)),
         ]),
       ]),
     );

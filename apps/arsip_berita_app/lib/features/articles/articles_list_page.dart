@@ -144,8 +144,6 @@ class _ArticlesListPageState extends State<ArticlesListPage> {
             await Navigator.push(context, MaterialPageRoute(builder: (_) => ArticleFormPage(db: _db)));
             _search();
           }),
-          const SizedBox(width: 8),
-          InkWell(onTap: () { ThemeController.instance.toggle(); }, borderRadius: BorderRadius.circular(10), child: Padding(padding: const EdgeInsets.all(8), child: Icon(Icons.dark_mode, color: DS.textDim))),
         ],
         child: PageContainer(child: Column(children: [
           // Search input moved under date filter; export icons hidden for now
