@@ -62,19 +62,13 @@ class _Logo extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: 120,
-      height: 120,
-      decoration: BoxDecoration(
-        color: const Color(0xFFE8F0FE),
-        borderRadius: BorderRadius.circular(28),
-      ),
-      child: const Center(
-        child: Icon(
-          Icons.newspaper,
-          size: 64,
-          color: Color(0xFF1A73E8),
-        ),
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(28),
+      child: Image.asset(
+        'assets/theme/arsip_berita_app.png',
+        width: 120,
+        height: 120,
+        fit: BoxFit.cover,
       ),
     );
   }

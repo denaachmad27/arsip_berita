@@ -1,7 +1,7 @@
 name: arsip_berita_app
 description: Arsip Berita App (Flutter + Supabase, offline-first)
 publish_to: 'none'
-version: 0.1.0+1
+version: 1.1.0+2
 
 environment:
   sdk: '>=3.4.0 <4.0.0'
@@ -25,8 +25,19 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^4.0.0
+  flutter_launcher_icons: ^0.13.1
 
 flutter:
   uses-material-design: true
   assets:
     - assets/theme/app.png
+    - assets/theme/arsip_berita_app.png
+
+# Launcher icons config
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: assets/theme/arsip_berita_app.png
+  adaptive_icon_background: "#FFFFFF"
+  adaptive_icon_foreground: assets/theme/arsip_berita_app.png
+  min_sdk_android: 21

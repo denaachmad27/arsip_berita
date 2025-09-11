@@ -183,6 +183,21 @@ class LocalDatabase {
     await db.insert('articles', data, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
+  Future<MediaModel?> getMediaById(int id) async {
+    final db = _db; if (db == null) return null;
+    final rows = await db.query('media', where: 'id = ?', whereArgs: [id], limit: 1);
+    if (rows.isEmpty) return null;
+    final r = rows.first;
+    return MediaModel(id: r['id'] as int, name: r['name'] as String, type: r['type'] as String);
+  }
+
+  Future<ArticleModel?> getArticleById(String id) async {
+    final db = _db; if (db == null) return null;
+    final rows = await db.query('articles', where: 'id = ?', whereArgs: [id], limit: 1);
+    if (rows.isEmpty) return null;
+    return ArticleModel.fromMap(rows.first);
+  }
+
   Future<List<ArticleWithMedium>> searchArticles({String q = '', String? mediaType, DateTime? startDate, DateTime? endDate}) async {
     final db = _db; if (db == null) return [];
     final where = <String>[]; final args = <Object?>[];
@@ -223,6 +238,13 @@ class LocalDatabase {
     final db = _db; if (db == null) return false;
     final rows = await db.query('articles', columns: ['id'], where: 'lower(canonical_url) = ?', whereArgs: [canonicalUrl.toLowerCase()]);
     return rows.isNotEmpty;
+  }
+
+  Future<String?> findArticleIdByCanonicalUrl(String canonicalUrl) async {
+    final db = _db; if (db == null) return null;
+    final rows = await db.query('articles', columns: ['id'], where: 'lower(canonical_url) = ?', whereArgs: [canonicalUrl.toLowerCase()], limit: 1);
+    if (rows.isEmpty) return null;
+    return rows.first['id'] as String?;
   }
 
   // Suggestions

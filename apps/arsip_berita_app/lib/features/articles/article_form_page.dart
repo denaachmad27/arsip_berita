@@ -13,7 +13,8 @@ import '../../widgets/ui_scaffold.dart';
 
 class ArticleFormPage extends StatefulWidget {
   final LocalDatabase db;
-  const ArticleFormPage({super.key, required this.db});
+  final ArticleModel? article; // when set, edit mode
+  const ArticleFormPage({super.key, required this.db, this.article});
   @override
   State<ArticleFormPage> createState() => _ArticleFormPageState();
 }
@@ -39,6 +40,44 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
   String? _canonical;
   String? _error;
 
+  bool get _isEditing => widget.article != null;
+
+  @override
+  void initState() {
+    super.initState();
+    if (_isEditing) {
+      _prefillFromArticle(widget.article!);
+    }
+  }
+
+  Future<void> _prefillFromArticle(ArticleModel a) async {
+    _title.text = a.title;
+    _url.text = a.url;
+    _canonical = a.canonicalUrl;
+    _desc.text = a.description ?? '';
+    _excerpt.text = a.excerpt ?? '';
+    _date = a.publishedAt;
+    _kind = a.kind ?? 'artikel';
+    await widget.db.init();
+    if (a.mediaId != null) {
+      final m = await widget.db.getMediaById(a.mediaId!);
+      if (m != null) {
+        _mediaName.text = m.name;
+        _mediaType = m.type;
+      }
+    }
+    final authors = await widget.db.authorsForArticle(a.id);
+    final people = await widget.db.peopleForArticle(a.id);
+    final orgs = await widget.db.orgsForArticle(a.id);
+    final locs = await widget.db.locationsForArticle(a.id);
+    setState(() {
+      _authorTags.addAll(authors);
+      _peopleTags.addAll(people);
+      _orgTags.addAll(orgs);
+      _locationTags.addAll(locs);
+    });
+  }
+
   Future<void> _extract() async {
     setState(() { _loading = true; _error = null; });
     try {
@@ -52,8 +91,11 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
         if ((_desc.text).isEmpty && (meta.description ?? '').isNotEmpty) _desc.text = meta.description!;
       }
       // local dedupe by canonical URL
-      if (_canonical != null && await widget.db.existsByCanonicalUrl(_canonical!)) {
-        _error = 'Artikel dengan canonical_url sudah ada: $_canonical';
+      if (_canonical != null) {
+        final existingId = await widget.db.findArticleIdByCanonicalUrl(_canonical!);
+        if (existingId != null && (!_isEditing || existingId != widget.article!.id)) {
+          _error = 'Artikel dengan canonical_url sudah ada: $_canonical';
+        }
       }
     } catch (e) {
       _error = e.toString();
@@ -69,10 +111,10 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
       mediaId = await widget.db.upsertMedia(_mediaName.text.trim(), _mediaType);
     }
     final a = ArticleModel(
-      id: 'local-${DateTime.now().millisecondsSinceEpoch}',
+      id: _isEditing ? widget.article!.id : 'local-${DateTime.now().millisecondsSinceEpoch}',
       title: _title.text.trim(),
       url: _url.text.trim(),
-      canonicalUrl: _canonical,
+      canonicalUrl: _canonical?.trim().isEmpty == true ? null : _canonical,
       mediaId: mediaId,
       kind: _kind,
       description: _desc.text.trim().isEmpty ? null : _desc.text.trim(),
@@ -112,7 +154,7 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
     return Scaffold(
       backgroundColor: DS.bg,
       body: UiScaffold(
-        title: 'Tambah Artikel',
+        title: _isEditing ? 'Edit Artikel' : 'Tambah Artikel',
         actions: [
           UiButton(label: 'Simpan', icon: Icons.save, onPressed: _loading ? null : _save),
         ],
