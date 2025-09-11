@@ -1,4 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'dart:typed_data';
+import 'package:file_picker/file_picker.dart';
+import '../../util/platform_io.dart';
 import '../../data/local/db.dart';
 import '../../services/metadata_extractor.dart';
 import '../../ui/theme.dart';
@@ -39,6 +43,11 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
   bool _loading = false;
   String? _canonical;
   String? _error;
+  // image state
+  Uint8List? _pickedImageBytes;
+  String? _pickedImageExt;
+  String? _imagePath; // existing image path (when editing)
+  bool _removeImage = false;
 
   bool get _isEditing => widget.article != null;
 
@@ -58,6 +67,7 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
     _excerpt.text = a.excerpt ?? '';
     _date = a.publishedAt;
     _kind = a.kind ?? 'artikel';
+    _imagePath = a.imagePath;
     await widget.db.init();
     if (a.mediaId != null) {
       final m = await widget.db.getMediaById(a.mediaId!);
@@ -76,6 +86,26 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
       _orgTags.addAll(orgs);
       _locationTags.addAll(locs);
     });
+  }
+
+  Future<void> _pickImage() async {
+    setState(() { _error = null; });
+    try {
+      final res = await FilePicker.platform.pickFiles(
+        allowMultiple: false,
+        type: FileType.image,
+        withData: true,
+      );
+      if (res == null || res.files.isEmpty) return;
+      final f = res.files.single;
+      setState(() {
+        _pickedImageBytes = f.bytes;
+        _pickedImageExt = (f.extension ?? '').isNotEmpty ? f.extension!.toLowerCase() : null;
+        _removeImage = false; // since we pick a new one
+      });
+    } catch (e) {
+      setState(() { _error = e.toString(); });
+    }
   }
 
   Future<void> _extract() async {
@@ -120,7 +150,32 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
       description: _desc.text.trim().isEmpty ? null : _desc.text.trim(),
       excerpt: _excerpt.text.trim().isEmpty ? null : _excerpt.text.trim(),
       publishedAt: _date,
+      imagePath: _isEditing ? widget.article!.imagePath : null,
     );
+    // Handle image save/delete
+    if (_pickedImageBytes != null && _pickedImageBytes!.isNotEmpty) {
+      try {
+        final ext = (_pickedImageExt ?? 'jpg').replaceAll('.', '');
+        final savedPath = await saveImageForArticle(a.id, _pickedImageBytes!, ext: ext);
+        if (savedPath.isEmpty && kIsWeb) {
+          _error = 'Penyimpanan gambar belum didukung di Web.';
+        }
+        if (savedPath.isNotEmpty) {
+          a.imagePath = savedPath;
+          _imagePath = savedPath;
+        }
+      } catch (e) {
+        _error = 'Gagal menyimpan gambar: $e';
+      }
+    } else if (_removeImage) {
+      // remove existing image and delete file when applicable
+      final old = _imagePath ?? widget.article?.imagePath;
+      if (old != null && old.isNotEmpty) {
+        await deleteIfExists(old);
+      }
+      a.imagePath = null;
+      _imagePath = null;
+    }
     await widget.db.upsertArticle(a);
     // Upsert tags and link
     final authorIds = <int>[];
@@ -197,6 +252,40 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
               UiInput(controller: _excerpt, hint: 'Excerpt'),
               const SizedBox(height: Spacing.md),
               UiTextArea(controller: _desc, hint: 'Deskripsi', minLines: 5, maxLines: 12),
+            ]),
+          ),
+          const SizedBox(height: Spacing.lg),
+          SectionCard(
+            title: 'Gambar',
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Container(
+                width: double.infinity,
+                decoration: BoxDecoration(
+                  color: DS.surface,
+                  border: Border.all(color: DS.border),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                padding: const EdgeInsets.all(12),
+                child: Builder(builder: (context) {
+                  if (_pickedImageBytes != null && _pickedImageBytes!.isNotEmpty) {
+                    return Image.memory(_pickedImageBytes!, height: 160, fit: BoxFit.cover);
+                  } else if ((_imagePath ?? '').isNotEmpty) {
+                    final w = imageFromPath(_imagePath!, height: 160, fit: BoxFit.cover);
+                    if (w != null) return w;
+                  }
+                  return Text('Belum ada gambar', style: TextStyle(color: DS.textDim));
+                }),
+              ),
+              const SizedBox(height: Spacing.sm),
+              Row(children: [
+                UiButton(label: 'Pilih Gambar', icon: Icons.image, primary: false, onPressed: _pickImage),
+                const SizedBox(width: Spacing.sm),
+                UiButton(label: 'Hapus', icon: Icons.delete, primary: false, onPressed: (_pickedImageBytes != null) || ((_imagePath ?? '').isNotEmpty) ? () { setState(() { _pickedImageBytes = null; _pickedImageExt = null; _removeImage = true; }); } : null),
+              ]),
+              if (kIsWeb) Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text('Catatan: Penyimpanan gambar belum didukung di Web.', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: DS.textDim)),
+              ),
             ]),
           ),
           const SizedBox(height: Spacing.lg),

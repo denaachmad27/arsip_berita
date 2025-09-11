@@ -14,7 +14,7 @@ class LocalDatabase {
     print('Database exists: $exists');
     _db = await openDatabase(
       path,
-      version: 5,
+      version: 6,
       onCreate: (db, v) async {
         await db.execute('''
           create table media (
@@ -34,6 +34,7 @@ class LocalDatabase {
             published_at text,
             description text,
             excerpt text,
+            image_path text,
             updated_at text not null
           );
         ''');
@@ -168,6 +169,13 @@ class LocalDatabase {
         if (oldV < 5) {
           try {
             await db.execute('alter table articles add column kind text');
+          } catch (e) {
+            // ignore if column already exists
+          }
+        }
+        if (oldV < 6) {
+          try {
+            await db.execute('alter table articles add column image_path text');
           } catch (e) {
             // ignore if column already exists
           }
@@ -442,6 +450,7 @@ class ArticleModel {
   DateTime? publishedAt;
   String? description;
   String? excerpt;
+  String? imagePath;
   DateTime updatedAt;
   ArticleModel({
     required this.id,
@@ -453,6 +462,7 @@ class ArticleModel {
     this.publishedAt,
     this.description,
     this.excerpt,
+    this.imagePath,
     DateTime? updatedAt,
   }) : updatedAt = updatedAt ?? DateTime.now();
 
@@ -466,6 +476,7 @@ class ArticleModel {
     'published_at': publishedAt?.toIso8601String(),
     'description': description,
     'excerpt': excerpt,
+    'image_path': imagePath,
     'updated_at': updatedAt.toIso8601String(),
   };
 
@@ -479,6 +490,7 @@ class ArticleModel {
     publishedAt: (m['published_at'] as String?) == null ? null : DateTime.tryParse(m['published_at'] as String),
     description: m['description'] as String?,
     excerpt: m['excerpt'] as String?,
+    imagePath: m['image_path'] as String?,
     updatedAt: DateTime.tryParse((m['updated_at'] as String?) ?? '') ?? DateTime.now(),
   );
 }

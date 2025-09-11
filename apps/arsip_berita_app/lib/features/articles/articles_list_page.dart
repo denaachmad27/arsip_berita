@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../util/platform_io.dart';
 import '../../data/local/db.dart';
 import '../../data/export_service.dart';
 import '../../ui/theme.dart';
@@ -256,7 +257,23 @@ class _ArticlesListPageState extends State<ArticlesListPage> {
                         final a = _results[i].article; final m = _results[i].medium;
                         final type = m?.type;
                         final ac = (type == 'online' || type == 'tv') ? DS.accent : DS.accent2;
-                        return UiListItem(title: a.title, subtitle: '${m?.name ?? '-'} • ${a.url}', accentColor: ac, onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => ArticleDetailPage(article: a))));
+                        Widget? thumb = (a.imagePath ?? '').isNotEmpty
+                            ? imageFromPath(a.imagePath!, width: 56, height: 56, fit: BoxFit.cover)
+                            : null;
+                        return FutureBuilder<List<String>>(
+                          future: _db.authorsForArticle(a.id),
+                          builder: (context, snapshot) {
+                            final authors = snapshot.data ?? const <String>[];
+                            final subtitle = authors.isEmpty ? '-' : authors.join(', ');
+                            return UiListItem(
+                              title: a.title,
+                              subtitle: subtitle,
+                              accentColor: ac,
+                              leading: thumb,
+                              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => ArticleDetailPage(article: a))),
+                            );
+                          },
+                        );
                       },
                     ),
             ),

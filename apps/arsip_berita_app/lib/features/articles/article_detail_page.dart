@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../util/platform_io.dart';
 import '../../data/local/db.dart';
 import '../../widgets/page_container.dart';
 import '../../widgets/section_card.dart';
@@ -62,6 +63,7 @@ class _ArticleDetailPageState extends State<ArticleDetailPage> {
                   widget.article.publishedAt = latest.publishedAt;
                   widget.article.description = latest.description;
                   widget.article.excerpt = latest.excerpt;
+                  widget.article.imagePath = latest.imagePath;
                   _tagsFuture = _loadTags();
                 });
               }
@@ -72,6 +74,15 @@ class _ArticleDetailPageState extends State<ArticleDetailPage> {
         child: PageContainer(child: ListView(children: [
           UiCard(
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              if ((a.imagePath ?? '').isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: Spacing.sm),
+                  child: Builder(builder: (context) {
+                    final w = imageFromPath(a.imagePath!, width: double.infinity, height: 180, fit: BoxFit.cover);
+                    if (w == null) return const SizedBox.shrink();
+                    return ClipRRect(borderRadius: BorderRadius.circular(8), child: w);
+                  }),
+                ),
               Text(a.title, style: Theme.of(context).textTheme.titleLarge?.copyWith(color: DS.text)),
               const SizedBox(height: Spacing.sm),
               Text(a.url, style: TextStyle(color: DS.textDim)),
@@ -87,10 +98,7 @@ class _ArticleDetailPageState extends State<ArticleDetailPage> {
                   Chip(label: Text(a.kind == 'opini' ? 'Opini' : 'Artikel')),
                 ],
               ]),
-              if (a.canonicalUrl != null) Padding(
-                padding: const EdgeInsets.only(top: Spacing.xs),
-                child: Text('Canonical: ${a.canonicalUrl}', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: DS.textDim)),
-              ),
+              // canonical URL removed to avoid duplication with main URL
               if (a.excerpt != null) ...[
                 const SizedBox(height: Spacing.md),
                 Text(a.excerpt!, style: TextStyle(color: DS.text)),
