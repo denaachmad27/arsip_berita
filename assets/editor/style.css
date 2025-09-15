@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Copyright (C) 2017 Wasabeef
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,20 +21,25 @@ html {
   height: 100%;
 }
 
+/* Make the editor area scrollable and fill the viewport */
 body {
-  overflow: scroll;
-  display: table;
-  table-layout: fixed;
+  margin: 0;
   width: 100%;
-  min-height:100%;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden; /* prevent double scroll on body */
 }
 
 #editor {
-  display: table-cell;
+  flex: 1 1 auto;
+  height: 100%;
   outline: 0px solid transparent;
   background-repeat: no-repeat;
   background-position: center;
   background-size: cover;
+  overflow-y: auto; /* show vertical scrollbar when content overflows */
+  -webkit-overflow-scrolling: touch; /* smooth scrolling on iOS */
 }
 
 #editor[placeholder]:empty:not(:focus):before {
@@ -104,3 +109,4 @@ img.resizable {
     -ms-transform: rotate(270deg);
     transform: rotate(270deg);
 }
+
