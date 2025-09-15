@@ -114,13 +114,45 @@ class RichEditorState extends State<RichEditor> {
                 javascriptExecutor.init(_controller!);
                 await _setInitialValues();
                 _addJSListener();
+                // Listen for edge-scroll hints from the editor to bubble scroll to parent
+                _controller!.addJavaScriptHandler(
+                  handlerName: 'edgeScroll',
+                  callback: (args) {
+                    try {
+                      final scrollController = PrimaryScrollController.of(context);
+                      if (scrollController != null && scrollController.hasClients) {
+                        num dy = 0;
+                        if (args.isNotEmpty) {
+                          final v = args.first;
+                          if (v is num) dy = v;
+                          // Some platforms may send as string
+                          if (v is String) {
+                            final parsed = num.tryParse(v);
+                            if (parsed != null) dy = parsed;
+                          }
+                        }
+                        // Apply a damping factor so outer scroll feels natural
+                        final delta = (dy).toDouble();
+                        final factor = 0.85; // tune as needed
+                        final target = (scrollController.position.pixels + delta * factor)
+                            .clamp(scrollController.position.minScrollExtent, scrollController.position.maxScrollExtent)
+                            .toDouble();
+                        scrollController.jumpTo(target);
+                      }
+                    } catch (_) {}
+                    return null;
+                  },
+                );
               }
             },
             // javascriptMode: JavascriptMode.unrestricted,
             // gestureNavigationEnabled: false,
-            gestureRecognizers: [
-              Factory(() => VerticalDragGestureRecognizer()..onUpdate = (_) {}),
-            ].toSet(),
+            // Prefer the WebView to eagerly claim gestures within its bounds
+            // so vertical drags scroll the editor smoothly. We'll manually
+            // bubble at edges via JS callback above.
+            gestureRecognizers: {
+              Factory<OneSequenceGestureRecognizer>(() => EagerGestureRecognizer()),
+            },
             onReceivedError: (controller, url, e) {
               print("error $e ");
             },

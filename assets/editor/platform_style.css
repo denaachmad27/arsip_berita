@@ -1,6 +1,6 @@
 body {
-    font-family: serif;
-    font-size: 18px;
+    font-family: Roboto, system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+    font-size: 14px; /* match app body text */
 }
 
 h1, h2, h3, h4, h5, h6 {

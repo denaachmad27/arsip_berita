@@ -28,8 +28,11 @@ class _ArticleDetailPageState extends State<ArticleDetailPage> {
   @override
   void initState() {
     super.initState();
-    // Kick off tag loading immediately; _loadTags will init DB as needed
-    _tagsFuture = _loadTags();
+    _db.init().then((_) {
+      setState(() {
+        _tagsFuture = _loadTags();
+      });
+    });
     _prepareDesc();
   }
 
@@ -42,7 +45,7 @@ class _ArticleDetailPageState extends State<ArticleDetailPage> {
     String html = raw;
     try {
       // Replace local file image src with data URIs so HtmlWidget can render them
-      final regex = RegExp(r'''<img[^>]*src=["']([^"']+)["'][^>]*>''', caseSensitive: false);
+      final regex = RegExp(r'<img[^>]*src=["\']([^"\']+)["\'][^>]*>', caseSensitive: false);
       final matches = regex.allMatches(html).toList().reversed; // iterate from end to keep indices valid
       for (final m in matches) {
         final src = m.group(1);
@@ -63,9 +66,6 @@ class _ArticleDetailPageState extends State<ArticleDetailPage> {
             final mime = _guessImageMime(path);
             final dataUri = 'data:' + mime + ';base64,' + b64;
             html = html.replaceRange(m.start, m.end, m.group(0)!.replaceFirst(src, dataUri));
-          } else {
-            // Drop images pointing to non-readable locations (e.g., content://)
-            html = html.replaceRange(m.start, m.end, '');
           }
         } catch (_) {}
       }
@@ -74,7 +74,6 @@ class _ArticleDetailPageState extends State<ArticleDetailPage> {
   }
 
   Future<(List<String>, List<String>, List<String>, List<String>)> _loadTags() async {
-    await _db.init();
     final authors = await _db.authorsForArticle(widget.article.id);
     final people = await _db.peopleForArticle(widget.article.id);
     final orgs = await _db.orgsForArticle(widget.article.id);
@@ -129,34 +128,6 @@ class _ArticleDetailPageState extends State<ArticleDetailPage> {
                 ),
               Text(a.title, style: Theme.of(context).textTheme.titleLarge?.copyWith(color: DS.text)),
               const SizedBox(height: Spacing.sm),
-              // Tags directly below title and above URL
-              FutureBuilder<(List<String>, List<String>, List<String>, List<String>)>(
-                future: _tagsFuture,
-                builder: (context, snapshot) {
-                  final authors = snapshot.data?.$1 ?? const <String>[];
-                  final people = snapshot.data?.$2 ?? const <String>[];
-                  final orgs = snapshot.data?.$3 ?? const <String>[];
-                  final locs = snapshot.data?.$4 ?? const <String>[];
-                  final chips = <Widget>[];
-                  for (final t in authors) {
-                    chips.add(Chip(avatar: const Icon(Icons.person, size: 16), label: Text(t)));
-                  }
-                  for (final t in people) {
-                    chips.add(Chip(avatar: const Icon(Icons.account_circle, size: 16), label: Text(t)));
-                  }
-                  for (final t in orgs) {
-                    chips.add(Chip(avatar: const Icon(Icons.apartment, size: 16), label: Text(t)));
-                  }
-                  for (final t in locs) {
-                    chips.add(Chip(avatar: const Icon(Icons.place, size: 16), label: Text(t)));
-                  }
-                  if (chips.isEmpty) return const SizedBox.shrink();
-                  return Padding(
-                    padding: const EdgeInsets.only(bottom: 8.0),
-                    child: Wrap(spacing: 8, runSpacing: 8, children: chips),
-                  );
-                },
-              ),
               Text(a.url, style: TextStyle(color: DS.textDim)),
               const SizedBox(height: Spacing.sm),
               Row(children: [
@@ -170,10 +141,8 @@ class _ArticleDetailPageState extends State<ArticleDetailPage> {
                   Chip(label: Text(a.kind == 'opini' ? 'Opini' : 'Artikel')),
                 ],
               ]),
-              
               // canonical URL removed to avoid duplication with main URL
-              // Show excerpt only when there is no rich description to avoid duplication
-              if ((a.excerpt != null && a.excerpt!.trim().isNotEmpty) && (_renderDesc == null || _renderDesc!.trim().isEmpty)) ...[
+              if (a.excerpt != null && a.excerpt!.trim().isNotEmpty) ...[
                 const SizedBox(height: Spacing.md),
                 // Render excerpt as plain text (usually short summary)
                 Text(a.excerpt!, style: TextStyle(color: DS.text)),
@@ -189,6 +158,31 @@ class _ArticleDetailPageState extends State<ArticleDetailPage> {
             ]),
           ),
           const SizedBox(height: Spacing.lg),
+          FutureBuilder<(List<String>, List<String>, List<String>, List<String>)>(
+            future: _tagsFuture,
+            builder: (context, snapshot) {
+              final authors = snapshot.data?.$1 ?? const <String>[];
+              final people = snapshot.data?.$2 ?? const <String>[];
+              final orgs = snapshot.data?.$3 ?? const <String>[];
+              final locs = snapshot.data?.$4 ?? const <String>[];
+              return Column(children: [
+                if (authors.isNotEmpty)
+                  SectionCard(title: 'Penulis', child: Wrap(spacing: 8, runSpacing: 8, children: [for (final t in authors) Chip(label: Text(t))])),
+                if (people.isNotEmpty) ...[
+                  const SizedBox(height: Spacing.lg),
+                  SectionCard(title: 'Tokoh', child: Wrap(spacing: 8, runSpacing: 8, children: [for (final t in people) Chip(label: Text(t))])),
+                ],
+                if (orgs.isNotEmpty) ...[
+                  const SizedBox(height: Spacing.lg),
+                  SectionCard(title: 'Organisasi', child: Wrap(spacing: 8, runSpacing: 8, children: [for (final t in orgs) Chip(label: Text(t))])),
+                ],
+                if (locs.isNotEmpty) ...[
+                  const SizedBox(height: Spacing.lg),
+                  SectionCard(title: 'Lokasi', child: Wrap(spacing: 8, runSpacing: 8, children: [for (final t in locs) Chip(label: Text(t))])),
+                ],
+              ]);
+            },
+          ),
           const SizedBox(height: Spacing.xxl),
         ])),
       ),

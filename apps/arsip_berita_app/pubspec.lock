@@ -603,10 +603,9 @@ packages:
   rich_editor:
     dependency: "direct main"
     description:
-      name: rich_editor
-      sha256: "79a8cb68118255a96713eaa129b543b0fcbc329866b772147249c07dd632c986"
-      url: "https://pub.dev"
-    source: hosted
+      path: "../.."
+      relative: true
+    source: path
     version: "0.1.1"
   riverpod:
     dependency: transitive

@@ -61,6 +61,73 @@ var editor = {
         this._ensureEditorInsertsParagraphWhenPressingEnter();
         this._initDragImageToResize();
         this._updateEditorState();
+
+        // Attach image click to preview overlay (delegated on editor container)
+        var overlay = document.getElementById('preview-overlay');
+        var overlayImg = document.getElementById('preview-image');
+        if (overlay && overlayImg) {
+            overlay.addEventListener('click', function(){ overlay.style.display = 'none'; overlayImg.src=''; });
+            this._textField.addEventListener('click', function(e){
+                var t = e.target;
+                if (t && t.tagName && t.tagName.toLowerCase() === 'img') {
+                    overlayImg.src = t.src;
+                    overlay.style.display = 'flex';
+                }
+            });
+        }
+
+        // Ensure newly inserted images also keep editor-small class
+        try {
+          var mo = new MutationObserver(function(mutations){
+            mutations.forEach(function(m){
+              if (!m.addedNodes) return;
+              for (var i=0;i<m.addedNodes.length;i++){
+                var n = m.addedNodes[i];
+                if (n.tagName && n.tagName.toLowerCase() === 'img') {
+                  editor._addClass(n, 'editor-small');
+                } else if (n.querySelectorAll) {
+                  var imgs = n.querySelectorAll('img');
+                  for (var j=0;j<imgs.length;j++){ editor._addClass(imgs[j], 'editor-small'); }
+                }
+              }
+            });
+          });
+          mo.observe(this._textField, { childList: true, subtree: true });
+        } catch(e) {}
+
+        // Bubble scroll to Flutter when reaching top/bottom edges
+        try {
+          var el = this._textField;
+          function atTop() { return el.scrollTop <= 0; }
+          function atBottom() { return Math.ceil(el.scrollTop + el.clientHeight) >= el.scrollHeight; }
+
+          // Mouse/touchpad wheel
+          el.addEventListener('wheel', function(e){
+            var dy = e.deltaY || 0;
+            if ((dy < 0 && atTop()) || (dy > 0 && atBottom())) {
+              if (window.flutter_inappwebview && window.flutter_inappwebview.callHandler) {
+                window.flutter_inappwebview.callHandler('edgeScroll', dy);
+              }
+            }
+          }, { passive: true });
+
+          // Touch drag
+          var touchStartY = 0;
+          el.addEventListener('touchstart', function(e){
+            if (e.touches && e.touches.length) touchStartY = e.touches[0].clientY || 0;
+          }, { passive: true });
+          el.addEventListener('touchmove', function(e){
+            if (!(e.touches && e.touches.length)) return;
+            var currentY = e.touches[0].clientY || 0;
+            var dy = (touchStartY - currentY); // >0 means scrolling down
+            var up = dy < 0, down = dy > 0;
+            if ((up && atTop()) || (down && atBottom())) {
+              if (window.flutter_inappwebview && window.flutter_inappwebview.callHandler) {
+                window.flutter_inappwebview.callHandler('edgeScroll', dy);
+              }
+            }
+          }, { passive: true });
+        } catch(_) {}
     },
 
     _ensureEditorInsertsParagraphWhenPressingEnter: function() {
@@ -221,6 +288,10 @@ var editor = {
 
             this._htmlSetByApplication = decodedHtml;
 
+            // ensure images have editor-small class for easier editing
+            var images = this._textField.getElementsByTagName('img');
+            for (var i = 0; i < images.length; i++) { this._addClass(images[i], 'editor-small'); }
+
             if(this._isImageResizingEnabled) {
                 this.makeImagesResizeable();
             }
@@ -235,7 +306,10 @@ var editor = {
     },
 
     _decodeHtml: function(html) {
-        return decodeURIComponent(html.replace(/\+/g, '%20'));
+        // We ensure the Dart side passes encodeURIComponent(html)
+        // so a plain decodeURIComponent here is sufficient and
+        // does not corrupt '+' characters in base64 data URIs.
+        return decodeURIComponent(html);
     },
 
     _setBaseUrl: function(baseUrl) {
@@ -278,6 +352,8 @@ var editor = {
 
         for(var i = 0; i < images.length; i++) {
             this._removeClass(images[i], resizableImageClass);
+            // also strip editor-only visual class before exporting html
+            this._removeClass(images[i], 'editor-small');
         }
     },
 
@@ -451,8 +527,11 @@ var editor = {
             imageElement.setAttribute('height', height);
         }
 
+        // default to a smaller visual size while editing (editor-only class)
+        this._addClass(imageElement, 'editor-small');
+
         if(this._isImageResizingEnabled) {
-            imageElement.setAttribute('class', resizableImageClass);
+            imageElement.setAttribute('class', (imageElement.getAttribute('class') || '').trim() + ' ' + resizableImageClass);
         }
 
         if(rotation)  {

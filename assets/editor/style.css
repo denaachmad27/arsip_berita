@@ -40,6 +40,9 @@ body {
   background-size: cover;
   overflow-y: auto; /* show vertical scrollbar when content overflows */
   -webkit-overflow-scrolling: touch; /* smooth scrolling on iOS */
+  touch-action: pan-y; /* allow vertical pan gestures inside editor */
+  /* Keep scrollbar space always reserved and visible */
+  scrollbar-gutter: stable both-edges;
 }
 
 #editor[placeholder]:empty:not(:focus):before {
@@ -64,11 +67,32 @@ sub {
     vertical-align: sub;
 }
 
-img {
+/* Default image behavior inside editor */
+#editor img {
+  max-width: 100%;
+  height: auto;
+  object-fit: contain;
+  display: inline-block;
+  vertical-align: middle;
+  margin: 8px 0; /* space so caret can be placed above/below easily */
+}
 
-    max-width: 100%;
-    object-fit: contain;
+/* Make images smaller while editing to ease cursoring; not applied outside editor */
+#editor img.editor-small {
+  max-width: 60%;
+  max-height: 30vh;
+}
 
+/* Visible scroll bar styling for editor */
+#editor::-webkit-scrollbar {
+  width: 10px; /* always visible track */
+}
+#editor::-webkit-scrollbar-track {
+  background: rgba(0,0,0,0.06);
+}
+#editor::-webkit-scrollbar-thumb {
+  background: rgba(0,0,0,0.3);
+  border-radius: 8px;
 }
 
 

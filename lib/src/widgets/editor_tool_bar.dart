@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -13,7 +14,7 @@ import 'color_picker_dialog.dart';
 import 'font_size_dialog.dart';
 import 'heading_dialog.dart';
 
-class EditorToolBar extends StatelessWidget {
+class EditorToolBar extends StatefulWidget {
   final Function(File image)? getImageUrl;
   final Function(File video)? getVideoUrl;
   final JavascriptExecutorBase javascriptExecutor;
@@ -25,6 +26,13 @@ class EditorToolBar extends StatelessWidget {
     required this.javascriptExecutor,
     this.enableVideo,
   });
+
+  @override
+  State<EditorToolBar> createState() => _EditorToolBarState();
+}
+
+class _EditorToolBarState extends State<EditorToolBar> {
+  bool _resizeEnabled = true;
 
   @override
   Widget build(BuildContext context) {
@@ -41,14 +49,14 @@ class EditorToolBar extends StatelessWidget {
                   tooltip: 'Bold',
                   icon: Icons.format_bold,
                   onTap: () async {
-                    await javascriptExecutor.setBold();
+                    await widget.javascriptExecutor.setBold();
                   },
                 ),
                 TabButton(
                   tooltip: 'Italic',
                   icon: Icons.format_italic,
                   onTap: () async {
-                    await javascriptExecutor.setItalic();
+                    await widget.javascriptExecutor.setItalic();
                   },
                 ),
                 TabButton(
@@ -63,7 +71,7 @@ class EditorToolBar extends StatelessWidget {
                       },
                     );
                     if (link != null)
-                      await javascriptExecutor.insertLink(link[0], link[1]);
+                      await widget.javascriptExecutor.insertLink(link[0], link[1]);
                   },
                 ),
                 TabButton(
@@ -77,18 +85,43 @@ class EditorToolBar extends StatelessWidget {
                       },
                     );
                     if (link != null) {
-                      if (getImageUrl != null && link[2]) {
-                        link[0] = await getImageUrl!(File(link[0]));
+                      if (link[2] == true) {
+                        final filePath = link[0] as String;
+                        if (widget.getImageUrl != null) {
+                          link[0] = await widget.getImageUrl!(File(filePath));
+                        } else {
+                          try {
+                            final bytes = await File(filePath).readAsBytes();
+                            final b64 = base64Encode(bytes);
+                            final mime = _guessImageMime(filePath);
+                            link[0] = 'data:' + mime + ';base64,' + b64;
+                          } catch (_) {
+                            // keep original path if conversion fails
+                          }
+                        }
                       }
-                      await javascriptExecutor.insertImage(
+                      await widget.javascriptExecutor.insertImage(
                         link[0],
                         alt: link[1],
                       );
                     }
                   },
                 ),
+                // Toggle image resize mode for easier cursor placement
+                TabButton(
+                  tooltip: _resizeEnabled ? 'Matikan resize gambar' : 'Aktifkan resize gambar',
+                  icon: _resizeEnabled ? Icons.open_in_full : Icons.open_in_full_outlined,
+                  onTap: () async {
+                    setState(() => _resizeEnabled = !_resizeEnabled);
+                    if (_resizeEnabled) {
+                      await widget.javascriptExecutor.makeImagesResizeable();
+                    } else {
+                      await widget.javascriptExecutor.disableImageResizing();
+                    }
+                  },
+                ),
                 Visibility(
-                  visible: enableVideo!,
+                  visible: widget.enableVideo!,
                   child: TabButton(
                     tooltip: 'Insert video',
                     icon: Icons.video_call_sharp,
@@ -100,10 +133,10 @@ class EditorToolBar extends StatelessWidget {
                         },
                       );
                       if (link != null) {
-                        if (getVideoUrl != null && link[2]) {
-                          link[0] = await getVideoUrl!(File(link[0]));
+                        if (widget.getVideoUrl != null && link[2]) {
+                          link[0] = await widget.getVideoUrl!(File(link[0]));
                         }
-                        await javascriptExecutor.insertVideo(
+                        await widget.javascriptExecutor.insertVideo(
                           link[0],
                           fromDevice: link[2],
                         );
@@ -115,56 +148,56 @@ class EditorToolBar extends StatelessWidget {
                   tooltip: 'Underline',
                   icon: Icons.format_underline,
                   onTap: () async {
-                    await javascriptExecutor.setUnderline();
+                    await widget.javascriptExecutor.setUnderline();
                   },
                 ),
                 TabButton(
                   tooltip: 'Strike through',
                   icon: Icons.format_strikethrough,
                   onTap: () async {
-                    await javascriptExecutor.setStrikeThrough();
+                    await widget.javascriptExecutor.setStrikeThrough();
                   },
                 ),
                 TabButton(
                   tooltip: 'Superscript',
                   icon: Icons.superscript,
                   onTap: () async {
-                    await javascriptExecutor.setSuperscript();
+                    await widget.javascriptExecutor.setSuperscript();
                   },
                 ),
                 TabButton(
                   tooltip: 'Subscript',
                   icon: Icons.subscript,
                   onTap: () async {
-                    await javascriptExecutor.setSubscript();
+                    await widget.javascriptExecutor.setSubscript();
                   },
                 ),
                 TabButton(
                   tooltip: 'Clear format',
                   icon: Icons.format_clear,
                   onTap: () async {
-                    await javascriptExecutor.removeFormat();
+                    await widget.javascriptExecutor.removeFormat();
                   },
                 ),
                 TabButton(
                   tooltip: 'Undo',
                   icon: Icons.undo,
                   onTap: () async {
-                    await javascriptExecutor.undo();
+                    await widget.javascriptExecutor.undo();
                   },
                 ),
                 TabButton(
                   tooltip: 'Redo',
                   icon: Icons.redo,
                   onTap: () async {
-                    await javascriptExecutor.redo();
+                    await widget.javascriptExecutor.redo();
                   },
                 ),
                 TabButton(
                   tooltip: 'Blockquote',
                   icon: Icons.format_quote,
                   onTap: () async {
-                    await javascriptExecutor.setBlockQuote();
+                    await widget.javascriptExecutor.setBlockQuote();
                   },
                 ),
                 TabButton(
@@ -180,13 +213,13 @@ class EditorToolBar extends StatelessWidget {
                     );
                     if (command != null) {
                       if (command == 'p') {
-                        await javascriptExecutor.setFormattingToParagraph();
+                        await widget.javascriptExecutor.setFormattingToParagraph();
                       } else if (command == 'pre') {
-                        await javascriptExecutor.setPreformat();
+                        await widget.javascriptExecutor.setPreformat();
                       } else if (command == 'blockquote') {
-                        await javascriptExecutor.setBlockQuote();
+                        await widget.javascriptExecutor.setBlockQuote();
                       } else {
-                        await javascriptExecutor
+                        await widget.javascriptExecutor
                             .setHeading(int.tryParse(command)!);
                       }
                     }
@@ -207,7 +240,7 @@ class EditorToolBar extends StatelessWidget {
                         },
                       );
                       if (command != null)
-                        await javascriptExecutor.setFontName(command);
+                        await widget.javascriptExecutor.setFontName(command);
                     },
                   ),
                 ),
@@ -223,7 +256,7 @@ class EditorToolBar extends StatelessWidget {
                       },
                     );
                     if (command != null)
-                      await javascriptExecutor
+                      await widget.javascriptExecutor
                           .setFontSize(int.tryParse(command)!);
                   },
                 ),
@@ -238,7 +271,7 @@ class EditorToolBar extends StatelessWidget {
                       },
                     );
                     if (color != null)
-                      await javascriptExecutor.setTextColor(color);
+                      await widget.javascriptExecutor.setTextColor(color);
                   },
                 ),
                 TabButton(
@@ -252,63 +285,63 @@ class EditorToolBar extends StatelessWidget {
                       },
                     );
                     if (color != null)
-                      await javascriptExecutor.setTextBackgroundColor(color);
+                      await widget.javascriptExecutor.setTextBackgroundColor(color);
                   },
                 ),
                 TabButton(
                   tooltip: 'Increase Indent',
                   icon: Icons.format_indent_increase,
                   onTap: () async {
-                    await javascriptExecutor.setIndent();
+                    await widget.javascriptExecutor.setIndent();
                   },
                 ),
                 TabButton(
                   tooltip: 'Decrease Indent',
                   icon: Icons.format_indent_decrease,
                   onTap: () async {
-                    await javascriptExecutor.setOutdent();
+                    await widget.javascriptExecutor.setOutdent();
                   },
                 ),
                 TabButton(
                   tooltip: 'Align Left',
                   icon: Icons.format_align_left_outlined,
                   onTap: () async {
-                    await javascriptExecutor.setJustifyLeft();
+                    await widget.javascriptExecutor.setJustifyLeft();
                   },
                 ),
                 TabButton(
                   tooltip: 'Align Center',
                   icon: Icons.format_align_center,
                   onTap: () async {
-                    await javascriptExecutor.setJustifyCenter();
+                    await widget.javascriptExecutor.setJustifyCenter();
                   },
                 ),
                 TabButton(
                   tooltip: 'Align Right',
                   icon: Icons.format_align_right,
                   onTap: () async {
-                    await javascriptExecutor.setJustifyRight();
+                    await widget.javascriptExecutor.setJustifyRight();
                   },
                 ),
                 TabButton(
                   tooltip: 'Justify',
                   icon: Icons.format_align_justify,
                   onTap: () async {
-                    await javascriptExecutor.setJustifyFull();
+                    await widget.javascriptExecutor.setJustifyFull();
                   },
                 ),
                 TabButton(
                   tooltip: 'Bullet List',
                   icon: Icons.format_list_bulleted,
                   onTap: () async {
-                    await javascriptExecutor.insertBulletList();
+                    await widget.javascriptExecutor.insertBulletList();
                   },
                 ),
                 TabButton(
                   tooltip: 'Numbered List',
                   icon: Icons.format_list_numbered,
                   onTap: () async {
-                    await javascriptExecutor.insertNumberedList();
+                    await widget.javascriptExecutor.insertNumberedList();
                   },
                 ),
                 TabButton(
@@ -322,7 +355,7 @@ class EditorToolBar extends StatelessWidget {
                       },
                     );
                     if (text != null)
-                      await javascriptExecutor.insertCheckbox(text);
+                      await widget.javascriptExecutor.insertCheckbox(text);
                   },
                 ),
 
@@ -341,4 +374,15 @@ class EditorToolBar extends StatelessWidget {
       ),
     );
   }
+}
+
+String _guessImageMime(String path) {
+  final p = path.toLowerCase();
+  if (p.endsWith('.png')) return 'image/png';
+  if (p.endsWith('.jpg') || p.endsWith('.jpeg')) return 'image/jpeg';
+  if (p.endsWith('.gif')) return 'image/gif';
+  if (p.endsWith('.webp')) return 'image/webp';
+  if (p.endsWith('.bmp')) return 'image/bmp';
+  if (p.endsWith('.svg')) return 'image/svg+xml';
+  return 'image/*';
 }

@@ -61,8 +61,8 @@ class JavascriptExecutorBase {
   /// Display HTML data in editor
   setHtml(String html) async {
     String? baseUrl;
-    await executeJavascript(
-        "setHtml(${jsonEncode(html)}, ${jsonEncode(baseUrl)});");
+    final encoded = encodeHtml(html);
+    await executeJavascript("setHtml('$encoded', ${jsonEncode(baseUrl)});");
     htmlField = html;
   }
 
@@ -339,11 +339,11 @@ class JavascriptExecutorBase {
   }
 
   decodeHtml(String html) {
-    return Uri.decodeFull(html);
+    return Uri.decodeComponent(html);
   }
 
   encodeHtml(String html) {
-    return Uri.encodeFull(html);
+    return Uri.encodeComponent(html);
   }
 
 // bool shouldOverrideUrlLoading(String url) {

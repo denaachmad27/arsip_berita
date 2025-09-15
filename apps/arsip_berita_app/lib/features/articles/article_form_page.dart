@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
+import 'dart:io';
+import 'dart:convert';
 import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
 import '../../util/platform_io.dart';
@@ -90,11 +92,60 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
     });
     // Ensure rich editor shows existing description when editing
     if (!kIsWeb && (_desc.text.trim().isNotEmpty)) {
+      Future<String> _convertLocalImagesToDataUri(String raw) async {
+        String html = raw;
+        try {
+          // Use a raw triple-quoted regex so quotes don't need escaping
+          final regex = RegExp(r'''<img[^>]*src=["']([^"]+|[^']+)["'][^>]*>''', caseSensitive: false);
+          final matches = regex.allMatches(html).toList().reversed;
+          for (final m in matches) {
+            final src = m.group(1);
+            if (src == null) continue;
+            final lowered = src.toLowerCase();
+            final isNetwork = lowered.startsWith('http://') || lowered.startsWith('https://') || lowered.startsWith('data:');
+            if (isNetwork) continue;
+            String path = src;
+            if (lowered.startsWith('file://')) {
+              path = src.replaceFirst(RegExp(r'^file://'), '');
+            }
+            try {
+              final f = File(path);
+              if (await f.exists()) {
+                final bytes = await f.readAsBytes();
+                final b64 = base64Encode(bytes);
+                String mime;
+                final p = path.toLowerCase();
+                if (p.endsWith('.png')) mime = 'image/png';
+                else if (p.endsWith('.jpg') || p.endsWith('.jpeg')) mime = 'image/jpeg';
+                else if (p.endsWith('.gif')) mime = 'image/gif';
+                else if (p.endsWith('.webp')) mime = 'image/webp';
+                else if (p.endsWith('.bmp')) mime = 'image/bmp';
+                else if (p.endsWith('.svg')) mime = 'image/svg+xml';
+                else mime = 'image/*';
+                final dataUri = 'data:' + mime + ';base64,' + b64;
+                html = html.replaceRange(m.start, m.end, m.group(0)!.replaceFirst(src, dataUri));
+              } else {
+                // Remove images pointing to non-readable locations to avoid broken icons in editor
+                html = html.replaceRange(m.start, m.end, '');
+              }
+            } catch (_) {}
+          }
+        } catch (_) {}
+        return html;
+      }
+
       void apply() async {
-        try { await _descEditorKey.currentState?.setHtml(_desc.text.trim()); } catch (_) {}
+        try {
+          final processed = await _convertLocalImagesToDataUri(_desc.text.trim());
+          // Only set initial HTML if editor is still effectively empty
+          final current = (await _descEditorKey.currentState?.getHtml())?.trim();
+          if (current == null || current.isEmpty || current == '<p>​</p>') {
+            await _descEditorKey.currentState?.setHtml(processed);
+          }
+        } catch (_) {}
       }
       WidgetsBinding.instance.addPostFrameCallback((_) { apply(); });
-      // Retry a few times to wait for WebView to be fully ready
+      // Retry a few times to wait for WebView to be fully ready, but guarded above
       Future.delayed(const Duration(milliseconds: 200), apply);
       Future.delayed(const Duration(milliseconds: 600), apply);
       Future.delayed(const Duration(milliseconds: 1200), apply);
@@ -298,9 +349,11 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
                       padding: const EdgeInsets.all(4),
                       child: RichEditor(
                         key: _descEditorKey,
+                        value: _desc.text.isNotEmpty ? _desc.text : null,
                         editorOptions: RichEditorOptions(
                           barPosition: BarPosition.TOP,
                           placeholder: 'Tulis deskripsi/artikel di sini...',
+                          baseFontFamily: 'Roboto, system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif',
                         ),
                       ),
                     ),
