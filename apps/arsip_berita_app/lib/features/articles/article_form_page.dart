@@ -14,6 +14,7 @@ import '../../widgets/ui_input.dart';
 import '../../widgets/ui_button.dart';
 import '../../widgets/ui_textarea.dart';
 import '../../widgets/ui_scaffold.dart';
+import 'package:rich_editor/rich_editor.dart';
 
 class ArticleFormPage extends StatefulWidget {
   final LocalDatabase db;
@@ -48,6 +49,7 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
   String? _pickedImageExt;
   String? _imagePath; // existing image path (when editing)
   bool _removeImage = false;
+  final _descEditorKey = GlobalKey<RichEditorState>();
 
   bool get _isEditing => widget.article != null;
 
@@ -86,6 +88,17 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
       _orgTags.addAll(orgs);
       _locationTags.addAll(locs);
     });
+    // Ensure rich editor shows existing description when editing
+    if (!kIsWeb && (_desc.text.trim().isNotEmpty)) {
+      void apply() async {
+        try { await _descEditorKey.currentState?.setHtml(_desc.text.trim()); } catch (_) {}
+      }
+      WidgetsBinding.instance.addPostFrameCallback((_) { apply(); });
+      // Retry a few times to wait for WebView to be fully ready
+      Future.delayed(const Duration(milliseconds: 200), apply);
+      Future.delayed(const Duration(milliseconds: 600), apply);
+      Future.delayed(const Duration(milliseconds: 1200), apply);
+    }
   }
 
   Future<void> _pickImage() async {
@@ -119,6 +132,13 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
         if ((_title.text).isEmpty && (meta.title ?? '').isNotEmpty) _title.text = meta.title!;
         if ((_excerpt.text).isEmpty && (meta.excerpt ?? '').isNotEmpty) _excerpt.text = meta.excerpt!;
         if ((_desc.text).isEmpty && (meta.description ?? '').isNotEmpty) _desc.text = meta.description!;
+        // Also push extracted content into the rich editor
+        final cand = ((meta.description ?? '').trim().isNotEmpty)
+            ? meta.description!.trim()
+            : (meta.excerpt ?? '').trim();
+        if (!kIsWeb && cand.isNotEmpty) {
+          await _descEditorKey.currentState?.setHtml(cand);
+        }
       }
       // local dedupe by canonical URL
       if (_canonical != null) {
@@ -136,6 +156,18 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
 
   Future<void> _save() async {
     await widget.db.init();
+    // Capture rich content HTML from the editor or fallback
+    String? descHtml;
+    if (kIsWeb) {
+      descHtml = _desc.text.trim().isEmpty ? null : _desc.text.trim();
+    } else {
+      try {
+        descHtml = (await _descEditorKey.currentState?.getHtml())?.trim();
+        if (descHtml != null && descHtml!.isEmpty) descHtml = null;
+      } catch (_) {
+        descHtml = _desc.text.trim().isEmpty ? null : _desc.text.trim();
+      }
+    }
     int? mediaId;
     if (_mediaName.text.trim().isNotEmpty) {
       mediaId = await widget.db.upsertMedia(_mediaName.text.trim(), _mediaType);
@@ -147,7 +179,7 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
       canonicalUrl: _canonical?.trim().isEmpty == true ? null : _canonical,
       mediaId: mediaId,
       kind: _kind,
-      description: _desc.text.trim().isEmpty ? null : _desc.text.trim(),
+      description: descHtml,
       excerpt: _excerpt.text.trim().isEmpty ? null : _excerpt.text.trim(),
       publishedAt: _date,
       imagePath: _isEditing ? widget.article!.imagePath : null,
@@ -249,9 +281,32 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
           SectionCard(
             title: 'Konten',
             child: Column(children: [
-              UiInput(controller: _excerpt, hint: 'Excerpt'),
-              const SizedBox(height: Spacing.md),
-              UiTextArea(controller: _desc, hint: 'Deskripsi', minLines: 5, maxLines: 12),
+              // Excerpt field hidden per request; still kept in state for storage if needed
+              // Use rich editor (mobile/desktop); fallback to textarea on Web
+              Builder(builder: (context) {
+                if (kIsWeb) {
+                  return UiTextArea(controller: _desc, hint: 'Deskripsi', minLines: 5, maxLines: 12);
+                }
+                return _KeepAlive(
+                  child: Container(
+                    height: 320,
+                    decoration: BoxDecoration(
+                      border: Border.all(color: DS.border),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.all(4),
+                      child: RichEditor(
+                        key: _descEditorKey,
+                        editorOptions: RichEditorOptions(
+                          barPosition: BarPosition.TOP,
+                          placeholder: 'Tulis deskripsi/artikel di sini...',
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+              }),
             ]),
           ),
           const SizedBox(height: Spacing.lg),
@@ -406,5 +461,22 @@ class _KindChips extends StatelessWidget {
         ),
       ]
     ]);
+  }
+}
+
+class _KeepAlive extends StatefulWidget {
+  final Widget child;
+  const _KeepAlive({required this.child});
+  @override
+  State<_KeepAlive> createState() => _KeepAliveState();
+}
+
+class _KeepAliveState extends State<_KeepAlive> with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
+    return widget.child;
   }
 }

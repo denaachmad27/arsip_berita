@@ -8,6 +8,7 @@ import '../../ui/design.dart';
 import '../../widgets/ui_scaffold.dart';
 import '../../widgets/ui_card.dart';
 import '../../ui/theme_mode.dart';
+import 'package:flutter_widget_from_html_core/flutter_widget_from_html_core.dart';
 import 'article_form_page.dart';
 
 class ArticleDetailPage extends StatefulWidget {
@@ -99,13 +100,18 @@ class _ArticleDetailPageState extends State<ArticleDetailPage> {
                 ],
               ]),
               // canonical URL removed to avoid duplication with main URL
-              if (a.excerpt != null) ...[
+              if (a.excerpt != null && a.excerpt!.trim().isNotEmpty) ...[
                 const SizedBox(height: Spacing.md),
+                // Render excerpt as plain text (usually short summary)
                 Text(a.excerpt!, style: TextStyle(color: DS.text)),
               ],
-              if (a.description != null) ...[
+              if (a.description != null && a.description!.trim().isNotEmpty) ...[
                 const SizedBox(height: Spacing.md),
-                Text(a.description!, style: TextStyle(color: DS.text)),
+                // Render rich HTML description from the editor
+                HtmlWidget(
+                  a.description!,
+                  textStyle: TextStyle(color: DS.text),
+                ),
               ],
             ]),
           ),

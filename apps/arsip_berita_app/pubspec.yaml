@@ -1,7 +1,7 @@
 name: arsip_berita_app
 description: Arsip Berita App (Flutter + Supabase, offline-first)
 publish_to: 'none'
-version: 1.2.0+3
+version: 1.2.2+5
 
 environment:
   sdk: '>=3.4.0 <4.0.0'
@@ -16,11 +16,14 @@ dependencies:
   path: ^1.9.0
   path_provider: ^2.1.4
   sqflite: ^2.3.3+1
-  share_plus: ^9.0.0
+  sqflite_common_ffi: ^2.3.3
+  share_plus: ^12.0.0
   file_saver: ^0.2.9+1
   palette_generator: ^0.3.3
   shared_preferences: ^2.2.2
   file_picker: ^8.0.6
+  rich_editor: ^0.1.1
+  flutter_widget_from_html_core: ^0.16.1
 
 dev_dependencies:
   flutter_test:

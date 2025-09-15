@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
@@ -11,6 +12,21 @@ class LocalDatabase {
     final path = p.join(dir.path, 'arsip_berita.db');
     print('Database path: $path');
     var exists = await databaseExists(path);
+    if (!exists) {
+      // Attempt to migrate legacy DB from older locations (e.g., getDatabasesPath)
+      try {
+        final legacyDir = await getDatabasesPath();
+        final legacyPath = p.join(legacyDir, 'arsip_berita.db');
+        if (await File(legacyPath).exists()) {
+          print('Found legacy DB at: ' + legacyPath + ' — migrating...');
+          await File(legacyPath).copy(path);
+          exists = await databaseExists(path);
+          print('Legacy DB migrated: ' + exists.toString());
+        }
+      } catch (e) {
+        print('Legacy DB check failed: $e');
+      }
+    }
     print('Database exists: $exists');
     _db = await openDatabase(
       path,
@@ -182,6 +198,48 @@ class LocalDatabase {
         }
       },
     );
+
+    // If the active DB is empty but a legacy DB exists with data, restore from legacy by replacing the file
+    try {
+      final rows = await _db!.rawQuery('select count(*) as c from sqlite_master where type = "table" and name = "articles"');
+      final hasArticlesTable = ((rows.first['c'] as int?) ?? (rows.first['c'] as num?)?.toInt() ?? 0) > 0;
+      int currentCount = 0;
+      if (hasArticlesTable) {
+        final r2 = await _db!.rawQuery('select count(*) as c from articles');
+        currentCount = (r2.first['c'] as int?) ?? (r2.first['c'] as num?)?.toInt() ?? 0;
+      }
+      if (currentCount == 0) {
+        final legacyDir = await getDatabasesPath();
+        final legacyPath = p.join(legacyDir, 'arsip_berita.db');
+        if (await File(legacyPath).exists()) {
+          // Check legacy has data
+          final legacyDb = await openDatabase(legacyPath);
+          try {
+            final r3 = await legacyDb.rawQuery('select count(*) as c from sqlite_master where type = "table" and name = "articles"');
+            final legacyHasArticles = ((r3.first['c'] as int?) ?? (r3.first['c'] as num?)?.toInt() ?? 0) > 0;
+            int legacyCount = 0;
+            if (legacyHasArticles) {
+              final r4 = await legacyDb.rawQuery('select count(*) as c from articles');
+              legacyCount = (r4.first['c'] as int?) ?? (r4.first['c'] as num?)?.toInt() ?? 0;
+            }
+            if (legacyCount > 0) {
+              print('Detected empty current DB, restoring from legacy DB at: ' + legacyPath);
+              await _db!.close();
+              await File(legacyPath).copy(path);
+              _db = await openDatabase(path, version: 6,
+                onCreate: (db, v) async {},
+                onUpgrade: (db, oldV, newV) async {},
+              );
+              print('Restore complete.');
+            }
+          } finally {
+            await legacyDb.close();
+          }
+        }
+      }
+    } catch (e) {
+      print('Post-open legacy restore check failed: $e');
+    }
   }
 
   Future<void> upsertArticle(ArticleModel a) async {
