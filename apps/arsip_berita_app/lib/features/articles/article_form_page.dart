@@ -52,6 +52,9 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
   String? _imagePath; // existing image path (when editing)
   bool _removeImage = false;
   final _descEditorKey = GlobalKey<RichEditorState>();
+  double _editorHeight = 320;
+  bool _prefillInProgress = false;
+  String? _initialDesc;
 
   bool get _isEditing => widget.article != null;
 
@@ -59,11 +62,71 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
   void initState() {
     super.initState();
     if (_isEditing) {
-      _prefillFromArticle(widget.article!);
+      _prefillInProgress = true;
+      _loadArticleForEditing();
+    }
+  }
+
+  Future<void> _loadArticleForEditing() async {
+    await _prefillFromArticle(widget.article!);
+    if (mounted) {
+      setState(() {
+        _prefillInProgress = false;
+      });
     }
   }
 
   Future<void> _prefillFromArticle(ArticleModel a) async {
+    Future<String> convertLocalImagesToDataUri(String raw) async {
+      String html = raw;
+      try {
+        // Use a raw triple-quoted regex so quotes don't need escaping
+        final regex = RegExp(r'''<img[^>]*src=["']([^"']+|[^']+)["'][^>]*>''', caseSensitive: false);
+        final matches = regex.allMatches(html).toList().reversed;
+        for (final m in matches) {
+          final src = m.group(1);
+          if (src == null) continue;
+          final lowered = src.toLowerCase();
+          final isNetwork = lowered.startsWith('http://') || lowered.startsWith('https://') || lowered.startsWith('data:');
+          if (isNetwork) continue;
+          String path = src;
+          if (lowered.startsWith('file://')) {
+            path = src.replaceFirst(RegExp(r'^file://'), '');
+          }
+          try {
+            final f = File(path);
+            if (await f.exists()) {
+              final bytes = await f.readAsBytes();
+              final b64 = base64Encode(bytes);
+              String mime;
+              final p = path.toLowerCase();
+              if (p.endsWith('.png')) {
+                mime = 'image/png';
+              } else if (p.endsWith('.jpg') || p.endsWith('.jpeg')) {
+                mime = 'image/jpeg';
+              } else if (p.endsWith('.gif')) {
+                mime = 'image/gif';
+              } else if (p.endsWith('.webp')) {
+                mime = 'image/webp';
+              } else if (p.endsWith('.bmp')) {
+                mime = 'image/bmp';
+              } else if (p.endsWith('.svg')) {
+                mime = 'image/svg+xml';
+              } else {
+                mime = 'image/*';
+              }
+              final dataUri = 'data:$mime;base64,$b64';
+              html = html.replaceRange(m.start, m.end, m.group(0)!.replaceFirst(src, dataUri));
+            } else {
+              // Remove images pointing to non-readable locations to avoid broken icons in editor
+              html = html.replaceRange(m.start, m.end, '');
+            }
+          } catch (_) {}
+        }
+      } catch (_) {}
+      return html;
+    }
+
     _title.text = a.title;
     _url.text = a.url;
     _canonical = a.canonicalUrl;
@@ -90,65 +153,14 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
       _orgTags.addAll(orgs);
       _locationTags.addAll(locs);
     });
-    // Ensure rich editor shows existing description when editing
-    if (!kIsWeb && (_desc.text.trim().isNotEmpty)) {
-      Future<String> _convertLocalImagesToDataUri(String raw) async {
-        String html = raw;
-        try {
-          // Use a raw triple-quoted regex so quotes don't need escaping
-          final regex = RegExp(r'''<img[^>]*src=["']([^"]+|[^']+)["'][^>]*>''', caseSensitive: false);
-          final matches = regex.allMatches(html).toList().reversed;
-          for (final m in matches) {
-            final src = m.group(1);
-            if (src == null) continue;
-            final lowered = src.toLowerCase();
-            final isNetwork = lowered.startsWith('http://') || lowered.startsWith('https://') || lowered.startsWith('data:');
-            if (isNetwork) continue;
-            String path = src;
-            if (lowered.startsWith('file://')) {
-              path = src.replaceFirst(RegExp(r'^file://'), '');
-            }
-            try {
-              final f = File(path);
-              if (await f.exists()) {
-                final bytes = await f.readAsBytes();
-                final b64 = base64Encode(bytes);
-                String mime;
-                final p = path.toLowerCase();
-                if (p.endsWith('.png')) mime = 'image/png';
-                else if (p.endsWith('.jpg') || p.endsWith('.jpeg')) mime = 'image/jpeg';
-                else if (p.endsWith('.gif')) mime = 'image/gif';
-                else if (p.endsWith('.webp')) mime = 'image/webp';
-                else if (p.endsWith('.bmp')) mime = 'image/bmp';
-                else if (p.endsWith('.svg')) mime = 'image/svg+xml';
-                else mime = 'image/*';
-                final dataUri = 'data:' + mime + ';base64,' + b64;
-                html = html.replaceRange(m.start, m.end, m.group(0)!.replaceFirst(src, dataUri));
-              } else {
-                // Remove images pointing to non-readable locations to avoid broken icons in editor
-                html = html.replaceRange(m.start, m.end, '');
-              }
-            } catch (_) {}
-          }
-        } catch (_) {}
-        return html;
-      }
 
-      void apply() async {
-        try {
-          final processed = await _convertLocalImagesToDataUri(_desc.text.trim());
-          // Only set initial HTML if editor is still effectively empty
-          final current = (await _descEditorKey.currentState?.getHtml())?.trim();
-          if (current == null || current.isEmpty || current == '<p>​</p>') {
-            await _descEditorKey.currentState?.setHtml(processed);
-          }
-        } catch (_) {}
+    final descText = a.description?.trim() ?? '';
+    if (descText.isNotEmpty) {
+      if (kIsWeb) {
+        _initialDesc = descText;
+      } else {
+        _initialDesc = await convertLocalImagesToDataUri(descText);
       }
-      WidgetsBinding.instance.addPostFrameCallback((_) { apply(); });
-      // Retry a few times to wait for WebView to be fully ready, but guarded above
-      Future.delayed(const Duration(milliseconds: 200), apply);
-      Future.delayed(const Duration(milliseconds: 600), apply);
-      Future.delayed(const Duration(milliseconds: 1200), apply);
     }
   }
 
@@ -189,6 +201,7 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
             : (meta.excerpt ?? '').trim();
         if (!kIsWeb && cand.isNotEmpty) {
           await _descEditorKey.currentState?.setHtml(cand);
+          await _descEditorKey.currentState?.refreshHeight();
         }
       }
       // local dedupe by canonical URL
@@ -214,7 +227,7 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
     } else {
       try {
         descHtml = (await _descEditorKey.currentState?.getHtml())?.trim();
-        if (descHtml != null && descHtml!.isEmpty) descHtml = null;
+        if (descHtml != null && descHtml.isEmpty) descHtml = null;
       } catch (_) {
         descHtml = _desc.text.trim().isEmpty ? null : _desc.text.trim();
       }
@@ -291,7 +304,11 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: DS.bg,
-      body: UiScaffold(
+      body: Stack(
+        children: [
+          AbsorbPointer(
+            absorbing: _prefillInProgress,
+            child: UiScaffold(
         title: _isEditing ? 'Edit Artikel' : 'Tambah Artikel',
         actions: [
           UiButton(label: 'Simpan', icon: Icons.save, onPressed: _loading ? null : _save),
@@ -340,7 +357,7 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
                 }
                 return _KeepAlive(
                   child: Container(
-                    height: 320,
+                    height: _editorHeight,
                     decoration: BoxDecoration(
                       border: Border.all(color: DS.border),
                       borderRadius: BorderRadius.circular(8),
@@ -349,12 +366,26 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
                       padding: const EdgeInsets.all(4),
                       child: RichEditor(
                         key: _descEditorKey,
-                        value: _desc.text.isNotEmpty ? _desc.text : null,
+                        value: _initialDesc,
                         editorOptions: RichEditorOptions(
                           barPosition: BarPosition.TOP,
                           placeholder: 'Tulis deskripsi/artikel di sini...',
                           baseFontFamily: 'Roboto, system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif',
                         ),
+                        onContentHeightChanged: (height) {
+                          if (!mounted) return;
+                          const double minHeight = 320.0;
+                          const double maxHeight = 4000.0;
+                          const double chrome = 62.0;
+                          final double safeHeight = height.isFinite && height > 0 ? height : minHeight;
+                          final double computed = safeHeight + chrome;
+                          final double target = computed.clamp(minHeight, maxHeight).toDouble();
+                          if ((_editorHeight - target).abs() > 1) {
+                            setState(() {
+                              _editorHeight = target;
+                            });
+                          }
+                        },
                       ),
                     ),
                   ),
@@ -442,6 +473,27 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
           if (_error != null) Padding(padding: const EdgeInsets.only(top: Spacing.sm), child: Text(_error!, style: const TextStyle(color: Colors.red))),
           const SizedBox(height: Spacing.xxl),
         ])),
+      ),
+          ),
+          if (_prefillInProgress) Positioned.fill(
+            child: Container(
+              color: Colors.black.withValues(alpha: 0.6),
+              child: const Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    CircularProgressIndicator(),
+                    SizedBox(height: Spacing.md),
+                    Text(
+                      'Memuat konten artikel...',
+                      style: TextStyle(color: Colors.white, fontSize: 16),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

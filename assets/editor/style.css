@@ -77,12 +77,6 @@ sub {
   margin: 8px 0; /* space so caret can be placed above/below easily */
 }
 
-/* Make images smaller while editing to ease cursoring; not applied outside editor */
-#editor img.editor-small {
-  max-width: 60%;
-  max-height: 30vh;
-}
-
 /* Visible scroll bar styling for editor */
 #editor::-webkit-scrollbar {
   width: 10px; /* always visible track */
@@ -99,13 +93,81 @@ sub {
 /* change this when changing the class name of resizableImageClass in rich_text_editor.js */
 img.resizable {
 
-  border: 1px solid gray;
-
   touch-action: none;
+
+  cursor: nwse-resize;
+
+  max-width: 100%;
+
+  height: auto;
 
   /* This is suggested by the doc, but I'm not sure that it is required when there is no large borders around the image. */
   /* This makes things *much* easier */
  /* box-sizing: border-box;*/
+
+}
+
+.editor-image-wrapper {
+
+  position: relative;
+
+  display: inline-block;
+
+  vertical-align: middle;
+
+  margin: 8px 0;
+
+  line-height: 0;
+
+  font-size: 0;
+
+}
+
+.editor-image-wrapper > img.resizable {
+
+  display: block;
+
+  max-width: 100%;
+
+  height: auto;
+
+  margin: 0;
+
+}
+
+.editor-resize-handle {
+
+  position: absolute;
+
+  width: 12px;
+
+  height: 12px;
+
+  background: #1e88e5;
+
+  border-radius: 50%;
+
+  border: 2px solid #ffffff;
+
+  box-shadow: 0 0 4px rgba(0, 0, 0, 0.35);
+
+  pointer-events: none;
+
+}
+
+.editor-resize-handle--bottom-right {
+
+  right: -6px;
+
+  bottom: -6px;
+
+}
+
+.editor-resize-handle--top-right {
+
+  right: -6px;
+
+  top: -6px;
 
 }
 

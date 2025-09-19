@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
+
   @override
   State<LoginPage> createState() => _LoginPageState();
 }
@@ -11,25 +11,19 @@ class _LoginPageState extends State<LoginPage> {
   final _email = TextEditingController();
   final _password = TextEditingController();
   bool _loading = false;
-  String? _error;
+  String? _message;
 
-  Future<void> _signInOrUp() async {
-    setState(() { _loading = true; _error = null; });
-    final client = Supabase.instance.client;
-    try {
-      final email = _email.text.trim();
-      final pass = _password.text;
-      if (email.isEmpty || pass.isEmpty) throw Exception('Email & password required');
-      final res = await client.auth.signInWithPassword(email: email, password: pass);
-      if (res.user == null) {
-        // try sign up
-        await client.auth.signUp(email: email, password: pass);
-      }
-    } catch (e) {
-      setState(() { _error = e.toString(); });
-    } finally {
-      if (mounted) setState(() { _loading = false; });
-    }
+  Future<void> _signIn() async {
+    setState(() {
+      _loading = true;
+      _message = null;
+    });
+    await Future<void>.delayed(const Duration(milliseconds: 400));
+    if (!mounted) return;
+    setState(() {
+      _loading = false;
+      _message = 'Autentikasi berbasis Supabase dimatikan. Gunakan akses lokal.';
+    });
   }
 
   @override
@@ -43,13 +37,31 @@ class _LoginPageState extends State<LoginPage> {
             padding: const EdgeInsets.all(16),
             child: Column(
               mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                TextField(controller: _email, decoration: const InputDecoration(labelText: 'Email')), 
-                TextField(controller: _password, decoration: const InputDecoration(labelText: 'Password'), obscureText: true),
+                TextField(
+                  controller: _email,
+                  decoration: const InputDecoration(labelText: 'Email'),
+                  enabled: !_loading,
+                ),
+                TextField(
+                  controller: _password,
+                  decoration: const InputDecoration(labelText: 'Password'),
+                  obscureText: true,
+                  enabled: !_loading,
+                ),
                 const SizedBox(height: 12),
-                if (_error != null) Text(_error!, style: const TextStyle(color: Colors.red)),
+                if (_message != null)
+                  Text(
+                    _message!,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(color: Colors.orange),
+                  ),
                 const SizedBox(height: 12),
-                FilledButton(onPressed: _loading ? null : _signInOrUp, child: Text(_loading ? '...' : 'Masuk / Daftar')),
+                FilledButton(
+                  onPressed: _loading ? null : _signIn,
+                  child: Text(_loading ? 'Memproses…' : 'Masuk'),
+                ),
               ],
             ),
           ),
@@ -58,4 +70,3 @@ class _LoginPageState extends State<LoginPage> {
     );
   }
 }
-

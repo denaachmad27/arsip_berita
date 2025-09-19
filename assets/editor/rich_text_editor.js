@@ -25,6 +25,9 @@ var editor = {
 
     _isImageResizingEnabled: true,
 
+    _lastKnownHeight: 0,
+    _heightNotifyScheduled: false,
+    _forceHeightNotification: false,
 
     init: function() {
         document.addEventListener("selectionchange", function() {
@@ -56,11 +59,14 @@ var editor = {
             }
         });
 
-        this._textField.addEventListener("paste", function(e) { editor._handlePaste(e); });
+        this._textField.addEventListener("input", function(){ editor._scheduleHeightNotification(); });
+        this._textField.addEventListener("cut", function(){ editor._scheduleHeightNotification(); });
+        this._textField.addEventListener("paste", function(e) { editor._handlePaste(e); editor._scheduleHeightNotification(); });
 
         this._ensureEditorInsertsParagraphWhenPressingEnter();
         this._initDragImageToResize();
         this._updateEditorState();
+        this._scheduleHeightNotification(true);
 
         // Attach image click to preview overlay (delegated on editor container)
         var overlay = document.getElementById('preview-overlay');
@@ -76,24 +82,85 @@ var editor = {
             });
         }
 
-        // Ensure newly inserted images also keep editor-small class
+
         try {
-          var mo = new MutationObserver(function(mutations){
+
+          var mutationObserver = new MutationObserver(function(mutations){
+
+            var shouldNotifyHeight = false;
+
             mutations.forEach(function(m){
-              if (!m.addedNodes) return;
-              for (var i=0;i<m.addedNodes.length;i++){
-                var n = m.addedNodes[i];
-                if (n.tagName && n.tagName.toLowerCase() === 'img') {
-                  editor._addClass(n, 'editor-small');
-                } else if (n.querySelectorAll) {
-                  var imgs = n.querySelectorAll('img');
-                  for (var j=0;j<imgs.length;j++){ editor._addClass(imgs[j], 'editor-small'); }
+
+              if (m.type === 'childList') {
+
+                if ((m.addedNodes && m.addedNodes.length) || (m.removedNodes && m.removedNodes.length)) {
+
+                  shouldNotifyHeight = true;
+
                 }
+
+                if (m.addedNodes && m.addedNodes.length) {
+
+                  for (var i = 0; i < m.addedNodes.length; i++) {
+
+                    var node = m.addedNodes[i];
+
+                    if (node.tagName && node.tagName.toLowerCase() === 'img') {
+
+                      if (editor._isImageResizingEnabled) {
+
+                        editor._prepareImageForEditing(node);
+
+                      } else {
+
+                        editor._ensureImageLoadListener(node);
+
+                      }
+
+                    } else if (node.querySelectorAll) {
+
+                      var nested = node.querySelectorAll('img');
+
+                      for (var j = 0; j < nested.length; j++) {
+
+                        if (editor._isImageResizingEnabled) {
+
+                          editor._prepareImageForEditing(nested[j]);
+
+                        } else {
+
+                          editor._ensureImageLoadListener(nested[j]);
+
+                        }
+
+                      }
+
+                    }
+
+                  }
+
+                }
+
+              } else if (m.type === 'attributes' && m.target && m.target.tagName && m.target.tagName.toLowerCase() === 'img') {
+
+                shouldNotifyHeight = true;
+
               }
+
             });
+
+            if (shouldNotifyHeight) {
+
+              editor._scheduleHeightNotification();
+
+            }
+
           });
-          mo.observe(this._textField, { childList: true, subtree: true });
+
+          mutationObserver.observe(this._textField, { childList: true, subtree: true, attributes: true });
+
         } catch(e) {}
+
 
         // Bubble scroll to Flutter when reaching top/bottom edges
         try {
@@ -205,14 +272,30 @@ var editor = {
                 y = (parseFloat(target.getAttribute('data-y')) || 0);
 
             // update the element's style
-            target.style.width  = event.rect.width + 'px';
-            target.style.height = event.rect.height + 'px';
+            var widthValue = Math.max(event.rect.width, editor._imageMinWidth);
+            var heightValue = Math.max(event.rect.height, editor._imageMinHeight);
+            var widthPx = widthValue + 'px';
+            var heightPx = heightValue + 'px';
+            target.style.width  = widthPx;
+            target.style.height = heightPx;
 
-            target.width  = event.rect.width + 'px';
-            target.height = event.rect.height + 'px';
+            target.removeAttribute('width');
+            target.removeAttribute('height');
+
+            target.setAttribute('data-width', Math.round(widthValue));
+            target.setAttribute('data-height', Math.round(heightValue));
+
+            var parent = target.parentElement;
+            if (parent && parent.classList && parent.classList.contains('editor-image-wrapper')) {
+                parent.style.width = widthPx;
+                parent.style.height = heightPx;
+            }
 
             target.setAttribute('data-x', x);
             target.setAttribute('data-y', y);
+
+            editor._applyWrapperDimensions(target);
+            editor._scheduleHeightNotification();
 
         });
     },
@@ -252,6 +335,7 @@ var editor = {
             }
 
             this._updateEditorState();
+            this._scheduleHeightNotification();
         }
         else {
             setTimeout(function () { // wait for till pasted data has been inserted
@@ -267,8 +351,52 @@ var editor = {
 
     _getHtmlWithoutInternalModifications: function() {
         var clonedHtml = this._textField.cloneNode(true);
+        var originalImages = this._textField.getElementsByTagName('img');
+        var clonedImages = clonedHtml.getElementsByTagName('img');
 
-        this._removeResizeImageClasses(clonedHtml);
+        for (var i = 0; i < clonedImages.length; i++) {
+            var originalImage = originalImages[i];
+            var clonedImage = clonedImages[i];
+
+            if (originalImage) {
+                var rect = originalImage.getBoundingClientRect();
+                var computedWidth = rect.width || originalImage.naturalWidth;
+                var computedHeight = rect.height || originalImage.naturalHeight;
+
+                if (computedWidth) {
+                    clonedImage.style.width = computedWidth + 'px';
+                    clonedImage.setAttribute('width', computedWidth);
+                }
+
+                if (computedHeight) {
+                    clonedImage.style.height = computedHeight + 'px';
+                    clonedImage.setAttribute('height', computedHeight);
+                }
+            }
+
+            var storedWidth = clonedImage.getAttribute('data-width');
+            var storedHeight = clonedImage.getAttribute('data-height');
+
+            if (!storedWidth && clonedImage.hasAttribute('width')) {
+                storedWidth = clonedImage.getAttribute('width');
+            }
+            if (!storedHeight && clonedImage.hasAttribute('height')) {
+                storedHeight = clonedImage.getAttribute('height');
+            }
+
+            clonedImage.removeAttribute('width');
+            clonedImage.removeAttribute('height');
+
+            if (storedWidth) {
+                clonedImage.setAttribute('data-width', storedWidth);
+            }
+            if (storedHeight) {
+                clonedImage.setAttribute('data-height', storedHeight);
+            }
+
+            this._removeClass(clonedImage, resizableImageClass);
+            this._removeClass(clonedImage, 'editor-small');
+        }
 
         return clonedHtml.innerHTML;
     },
@@ -288,10 +416,6 @@ var editor = {
 
             this._htmlSetByApplication = decodedHtml;
 
-            // ensure images have editor-small class for easier editing
-            var images = this._textField.getElementsByTagName('img');
-            for (var i = 0; i < images.length; i++) { this._addClass(images[i], 'editor-small'); }
-
             if(this._isImageResizingEnabled) {
                 this.makeImagesResizeable();
             }
@@ -303,6 +427,8 @@ var editor = {
         }
 
         this.didHtmlChange = false;
+
+        this._scheduleHeightNotification(true);
     },
 
     _decodeHtml: function(html) {
@@ -337,7 +463,7 @@ var editor = {
         var images = document.getElementsByTagName("img");
 
         for(var i = 0; i < images.length; i++) {
-            this._addClass(images[i], resizableImageClass);
+            this._prepareImageForEditing(images[i]);
         }
     },
 
@@ -347,14 +473,219 @@ var editor = {
         this._removeResizeImageClasses(document);
     },
 
+    _prepareImageForEditing: function(image) {
+        if (!image) {
+            return;
+        }
+
+        this._addClass(image, resizableImageClass);
+
+        var wrapper = this._ensureImageWrapper(image);
+        this._ensureResizeHandle(wrapper);
+        this._ensureImageLoadListener(image);
+
+        if (!image.getAttribute('data-width')) {
+            var attrWidth = image.getAttribute('width');
+            if (attrWidth) {
+                image.setAttribute('data-width', attrWidth);
+            }
+        }
+
+        if (!image.getAttribute('data-height')) {
+            var attrHeight = image.getAttribute('height');
+            if (attrHeight) {
+                image.setAttribute('data-height', attrHeight);
+            }
+        }
+
+        if (image.complete) {
+            this._applyWrapperDimensions(image);
+        } else {
+            image.removeAttribute('width');
+            image.removeAttribute('height');
+        }
+    },
+
+    _ensureImageWrapper: function(image) {
+        if (!image || !image.parentElement) {
+            return null;
+        }
+
+        var parent = image.parentElement;
+        if (parent.classList && parent.classList.contains('editor-image-wrapper')) {
+            return parent;
+        }
+
+        var wrapper = document.createElement('span');
+        wrapper.className = 'editor-image-wrapper';
+        wrapper.style.display = 'inline-block';
+        wrapper.style.position = 'relative';
+
+        parent.insertBefore(wrapper, image);
+        wrapper.appendChild(image);
+
+        return wrapper;
+    },
+
+    _ensureResizeHandle: function(wrapper) {
+        if (!wrapper) {
+            return;
+        }
+
+        if (!wrapper.querySelector('.editor-resize-handle--bottom-right')) {
+            var br = document.createElement('span');
+            br.className = 'editor-resize-handle editor-resize-handle--bottom-right';
+            wrapper.appendChild(br);
+        }
+
+        if (!wrapper.querySelector('.editor-resize-handle--top-right')) {
+            var tr = document.createElement('span');
+            tr.className = 'editor-resize-handle editor-resize-handle--top-right';
+            wrapper.appendChild(tr);
+        }
+    },
+
+    _applyWrapperDimensions: function(image) {
+        if (!image) {
+            return;
+        }
+
+        var wrapper = image.parentElement;
+        if (!wrapper || !wrapper.classList || !wrapper.classList.contains('editor-image-wrapper')) {
+            return;
+        }
+
+        var resolvedWidth = parseFloat(image.getAttribute('data-width'));
+        if (!resolvedWidth || isNaN(resolvedWidth) || resolvedWidth <= 0) {
+            var measuredWidth = image.offsetWidth || image.naturalWidth;
+            if (measuredWidth && measuredWidth > 0) {
+                resolvedWidth = measuredWidth;
+                image.setAttribute('data-width', Math.round(resolvedWidth));
+            } else {
+                resolvedWidth = null;
+            }
+        }
+
+        var resolvedHeight = parseFloat(image.getAttribute('data-height'));
+        if (!resolvedHeight || isNaN(resolvedHeight) || resolvedHeight <= 0) {
+            var measuredHeight = image.offsetHeight || image.naturalHeight;
+            if (measuredHeight && measuredHeight > 0) {
+                resolvedHeight = measuredHeight;
+                image.setAttribute('data-height', Math.round(resolvedHeight));
+            } else {
+                resolvedHeight = null;
+            }
+        }
+
+        if (resolvedWidth) {
+            wrapper.style.width = resolvedWidth + 'px';
+            image.style.width = resolvedWidth + 'px';
+        } else {
+            wrapper.style.width = '';
+            image.style.width = '';
+        }
+
+        if (resolvedHeight) {
+            wrapper.style.height = resolvedHeight + 'px';
+            image.style.height = resolvedHeight + 'px';
+        } else {
+            wrapper.style.height = '';
+            image.style.height = '';
+        }
+
+        if (resolvedWidth || resolvedHeight) {
+            image.removeAttribute('width');
+            image.removeAttribute('height');
+        }
+    },
+
+    _ensureImageLoadListener: function(image) {
+        if (!image || image._editorResizeLoadListenerAttached) {
+            return;
+        }
+
+        image.addEventListener('load', function() {
+            editor._applyWrapperDimensions(image);
+            editor._scheduleHeightNotification();
+        });
+
+        image._editorResizeLoadListenerAttached = true;
+    },
+
     _removeResizeImageClasses: function(document) {
         var images = document.getElementsByTagName("img");
 
         for(var i = 0; i < images.length; i++) {
-            this._removeClass(images[i], resizableImageClass);
+            var img = images[i];
+            this._removeClass(img, resizableImageClass);
             // also strip editor-only visual class before exporting html
-            this._removeClass(images[i], 'editor-small');
+            this._removeClass(img, 'editor-small');
+
+            var parent = img.parentElement;
+            if (parent && parent.classList && parent.classList.contains('editor-image-wrapper')) {
+                var handles = parent.querySelectorAll('.editor-resize-handle');
+                handles.forEach(function(handle){ parent.removeChild(handle); });
+
+                if (parent.parentNode) {
+                    parent.parentNode.insertBefore(img, parent);
+                    parent.parentNode.removeChild(parent);
+                }
+            }
         }
+    },
+
+    _scheduleHeightNotification: function(force) {
+        if (force) {
+            this._forceHeightNotification = true;
+        }
+
+        if (this._heightNotifyScheduled) {
+            return;
+        }
+
+        var editorRef = this;
+        this._heightNotifyScheduled = true;
+
+        var dispatcher = window.requestAnimationFrame || function(cb) { return setTimeout(cb, 16); };
+
+        dispatcher(function() {
+            editorRef._heightNotifyScheduled = false;
+            var shouldForce = editorRef._forceHeightNotification || force;
+            editorRef._forceHeightNotification = false;
+            editorRef._notifyHeightIfNeeded(shouldForce);
+        });
+    },
+
+    _notifyHeightIfNeeded: function(force) {
+        if (!this._textField) {
+            return;
+        }
+
+        var scrollHeight = this._textField.scrollHeight || 0;
+        var offsetHeight = this._textField.offsetHeight || 0;
+        var height = Math.max(scrollHeight, offsetHeight);
+
+        if (!force && Math.abs(height - this._lastKnownHeight) < 1) {
+            return;
+        }
+
+        this._lastKnownHeight = height;
+
+        try {
+            if (window.flutter_inappwebview && window.flutter_inappwebview.callHandler) {
+                window.flutter_inappwebview.callHandler('contentHeight', height);
+            } else if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.contentHeight) {
+                window.webkit.messageHandlers.contentHeight.postMessage(height);
+            } else if (window.parent && window.parent !== window && window.parent.postMessage) {
+                window.parent.postMessage({ type: 'contentHeight', height: height }, '*');
+            }
+        } catch (e) {
+            console.log('Height notification failed', e);
+        }
+    },
+
+    refreshHeight: function() {
+        this._notifyHeightIfNeeded(true);
     },
 
     _hasClass: function(element, className) {
@@ -520,15 +851,12 @@ var editor = {
         }
 
         if(width)  {
-            imageElement.setAttribute('width', width);
+            imageElement.setAttribute('data-width', width);
         }
 
         if(height)  {
-            imageElement.setAttribute('height', height);
+            imageElement.setAttribute('data-height', height);
         }
-
-        // default to a smaller visual size while editing (editor-only class)
-        this._addClass(imageElement, 'editor-small');
 
         if(this._isImageResizingEnabled) {
             imageElement.setAttribute('class', (imageElement.getAttribute('class') || '').trim() + ' ' + resizableImageClass);
@@ -538,7 +866,26 @@ var editor = {
             this._setImageRotation(imageElement, rotation);
         }
 
-        this._insertHtml(imageElement.outerHTML);
+        // insert as temporary wrapper so we can regrab the created element
+        var wrapper = document.createElement('div');
+        wrapper.innerHTML = imageElement.outerHTML;
+        var inserted = wrapper.firstChild;
+
+        if (this._isImageResizingEnabled) {
+            var targetWidth = inserted.getAttribute('data-width');
+            if (!targetWidth) {
+                var containerWidth = this._textField.clientWidth || window.innerWidth || 0;
+                targetWidth = Math.round(containerWidth * 0.75);
+                inserted.setAttribute('data-width', targetWidth);
+            }
+
+            inserted.style.width = targetWidth + 'px';
+            inserted.removeAttribute('width');
+        }
+
+        this._insertHtml(inserted.outerHTML);
+
+        this._scheduleHeightNotification();
     },
 
     _setImageRotation: function(imageElement, rotation) {

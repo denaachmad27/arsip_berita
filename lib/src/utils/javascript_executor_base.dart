@@ -66,6 +66,10 @@ class JavascriptExecutorBase {
     htmlField = html;
   }
 
+  Future<void> refreshHeight() async {
+    await executeJavascript("refreshHeight();");
+  }
+
   /// Get current HTML data from Editor
   getCurrentHtml() async {
     String? html = await executeJavascript('getEncodedHtml();');
@@ -131,8 +135,20 @@ class JavascriptExecutorBase {
 
   /// Set a [Color] for the selected text's background
   setTextBackgroundColor(Color? color) async {
-    String? hex = color!.toHexColorString();
-    await executeJavascript("setTextBackgroundColor('$hex');");
+    if (color == null) {
+      return;
+    }
+    String value;
+    if (color.alpha == 0) {
+      value = 'rgba(0, 0, 0, 0)';
+    } else {
+      final r = color.red;
+      final g = color.green;
+      final b = color.blue;
+      final a = (color.alpha / 255).clamp(0, 1).toStringAsFixed(2);
+      value = 'rgba($r, $g, $b, $a)';
+    }
+    await executeJavascript("setTextBackgroundColor('$value');");
   }
 
   /// Apply a font face to selected text
@@ -223,12 +239,12 @@ class JavascriptExecutorBase {
   /// Rotation can be one of the following values: 0, 90, 180, 270.
   insertImage(String url,
       {String? alt, int? width, int? height, int? rotation}) async {
-    if (rotation == null) rotation = 0;
-    if (width == null) width = 300;
-    if (height == null) height = 300;
-    if (alt == null) alt = '';
+    final rotationValue = rotation ?? 0;
+    final altValue = alt ?? '';
+    final widthLiteral = width != null ? width.toString() : 'null';
+    final heightLiteral = height != null ? height.toString() : 'null';
     await executeJavascript(
-      "insertImage('$url', '$alt', '$width', '$height', $rotation);",
+      "insertImage('$url', '$altValue', $widthLiteral, $heightLiteral, $rotationValue);",
     );
   }
 

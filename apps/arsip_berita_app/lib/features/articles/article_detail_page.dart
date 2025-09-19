@@ -1,15 +1,14 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'dart:convert';
 import 'dart:io';
 import '../../util/platform_io.dart';
 import '../../data/local/db.dart';
 import '../../widgets/page_container.dart';
-import '../../widgets/section_card.dart';
 import '../../ui/theme.dart';
 import '../../ui/design.dart';
 import '../../widgets/ui_scaffold.dart';
 import '../../widgets/ui_card.dart';
-import '../../ui/theme_mode.dart';
 import 'package:flutter_widget_from_html_core/flutter_widget_from_html_core.dart';
 import 'article_form_page.dart';
 
@@ -23,7 +22,9 @@ class ArticleDetailPage extends StatefulWidget {
 class _ArticleDetailPageState extends State<ArticleDetailPage> {
   final _db = LocalDatabase();
   Future<(List<String>, List<String>, List<String>, List<String>)>? _tagsFuture;
-  String? _renderDesc; // processed HTML for rendering (e.g., local images -> data URIs)
+  String?
+      _renderDesc; // processed HTML for rendering (e.g., local images -> data URIs)
+  static const String _highlightStyle = 'background-color: #a5d6a7;';
 
   @override
   void initState() {
@@ -36,19 +37,27 @@ class _ArticleDetailPageState extends State<ArticleDetailPage> {
   Future<void> _prepareDesc() async {
     final raw = widget.article.description;
     if (raw == null || raw.trim().isEmpty) {
-      setState(() { _renderDesc = null; });
+      setState(() {
+        _renderDesc = null;
+      });
       return;
     }
     String html = raw;
     try {
       // Replace local file image src with data URIs so HtmlWidget can render them
-      final regex = RegExp(r'''<img[^>]*src=["']([^"']+)["'][^>]*>''', caseSensitive: false);
-      final matches = regex.allMatches(html).toList().reversed; // iterate from end to keep indices valid
+      final regex = RegExp(r'''<img[^>]*src=["']([^"']+)["'][^>]*>''',
+          caseSensitive: false);
+      final matches = regex
+          .allMatches(html)
+          .toList()
+          .reversed; // iterate from end to keep indices valid
       for (final m in matches) {
         final src = m.group(1);
         if (src == null) continue;
         final lowered = src.toLowerCase();
-        final isNetwork = lowered.startsWith('http://') || lowered.startsWith('https://') || lowered.startsWith('data:');
+        final isNetwork = lowered.startsWith('http://') ||
+            lowered.startsWith('https://') ||
+            lowered.startsWith('data:');
         if (isNetwork) continue;
         // Handle file URI or plain path
         String path = src;
@@ -61,8 +70,9 @@ class _ArticleDetailPageState extends State<ArticleDetailPage> {
             final bytes = await f.readAsBytes();
             final b64 = base64Encode(bytes);
             final mime = _guessImageMime(path);
-            final dataUri = 'data:' + mime + ';base64,' + b64;
-            html = html.replaceRange(m.start, m.end, m.group(0)!.replaceFirst(src, dataUri));
+            final dataUri = 'data:$mime;base64,$b64';
+            html = html.replaceRange(
+                m.start, m.end, m.group(0)!.replaceFirst(src, dataUri));
           } else {
             // Drop images pointing to non-readable locations (e.g., content://)
             html = html.replaceRange(m.start, m.end, '');
@@ -70,16 +80,53 @@ class _ArticleDetailPageState extends State<ArticleDetailPage> {
         } catch (_) {}
       }
     } catch (_) {}
-    if (mounted) setState(() { _renderDesc = html; });
+    html = _normalizeHighlightStyles(html);
+    widget.article.description = html;
+    if (mounted)
+      setState(() {
+        _renderDesc = html;
+      });
   }
 
-  Future<(List<String>, List<String>, List<String>, List<String>)> _loadTags() async {
+  Future<(List<String>, List<String>, List<String>, List<String>)>
+      _loadTags() async {
     await _db.init();
     final authors = await _db.authorsForArticle(widget.article.id);
     final people = await _db.peopleForArticle(widget.article.id);
     final orgs = await _db.orgsForArticle(widget.article.id);
     final locs = await _db.locationsForArticle(widget.article.id);
     return (authors, people, orgs, locs);
+  }
+
+  Widget _compactTagChip(IconData icon, String label) {
+    return Chip(
+      avatar: Icon(icon, size: 16),
+      label: Text(label),
+      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      visualDensity: const VisualDensity(horizontal: -2, vertical: -3),
+      labelStyle: Theme.of(context).textTheme.bodySmall,
+    );
+  }
+
+  String _normalizeHighlightStyles(String html) {
+    final regex = RegExp(
+        r'(<mark[^>]*data-highlight="true"[^>]*style=")([^"]*)(")',
+        caseSensitive: false);
+    final singleQuoteRegex = RegExp(
+        r"(<mark[^>]*data-highlight='true'[^>]*style=')([^']*)(')",
+        caseSensitive: false);
+    html = html.replaceAllMapped(
+        regex, (m) => '${m.group(1)}$_highlightStyle${m.group(3)}');
+    html = html.replaceAllMapped(
+        singleQuoteRegex, (m) => '${m.group(1)}$_highlightStyle${m.group(3)}');
+    html = html.replaceAll(
+        RegExp(r'background-color:\s*#fff59d;?', caseSensitive: false),
+        _highlightStyle);
+    html = html.replaceAll(
+        RegExp(r'background-color:\s*#fff9c4;?', caseSensitive: false),
+        _highlightStyle);
+    return html;
   }
 
   @override
@@ -93,7 +140,10 @@ class _ArticleDetailPageState extends State<ArticleDetailPage> {
           IconButton(
             tooltip: 'Edit',
             onPressed: () async {
-              await Navigator.push(context, MaterialPageRoute(builder: (_) => ArticleFormPage(db: _db, article: a)));
+              await Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                      builder: (_) => ArticleFormPage(db: _db, article: a)));
               // reload article and tags after editing
               final latest = await _db.getArticleById(a.id);
               if (latest != null && mounted) {
@@ -115,22 +165,31 @@ class _ArticleDetailPageState extends State<ArticleDetailPage> {
             icon: const Icon(Icons.edit),
           ),
         ],
-        child: PageContainer(child: ListView(children: [
+        child: PageContainer(
+            child: ListView(children: [
           UiCard(
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               if ((a.imagePath ?? '').isNotEmpty)
                 Padding(
                   padding: const EdgeInsets.only(bottom: Spacing.sm),
                   child: Builder(builder: (context) {
-                    final w = imageFromPath(a.imagePath!, width: double.infinity, height: 180, fit: BoxFit.cover);
+                    final w = imageFromPath(a.imagePath!,
+                        width: double.infinity, height: 180, fit: BoxFit.cover);
                     if (w == null) return const SizedBox.shrink();
-                    return ClipRRect(borderRadius: BorderRadius.circular(8), child: w);
+                    return ClipRRect(
+                        borderRadius: BorderRadius.circular(8), child: w);
                   }),
                 ),
-              Text(a.title, style: Theme.of(context).textTheme.titleLarge?.copyWith(color: DS.text)),
+              Text(a.title,
+                  style: Theme.of(context)
+                      .textTheme
+                      .titleLarge
+                      ?.copyWith(color: DS.text)),
               const SizedBox(height: Spacing.sm),
               // Tags directly below title and above URL
-              FutureBuilder<(List<String>, List<String>, List<String>, List<String>)>(
+              FutureBuilder<
+                  (List<String>, List<String>, List<String>, List<String>)>(
                 future: _tagsFuture,
                 builder: (context, snapshot) {
                   final authors = snapshot.data?.$1 ?? const <String>[];
@@ -139,21 +198,21 @@ class _ArticleDetailPageState extends State<ArticleDetailPage> {
                   final locs = snapshot.data?.$4 ?? const <String>[];
                   final chips = <Widget>[];
                   for (final t in authors) {
-                    chips.add(Chip(avatar: const Icon(Icons.person, size: 16), label: Text(t)));
+                    chips.add(_compactTagChip(Icons.person, t));
                   }
                   for (final t in people) {
-                    chips.add(Chip(avatar: const Icon(Icons.account_circle, size: 16), label: Text(t)));
+                    chips.add(_compactTagChip(Icons.account_circle, t));
                   }
                   for (final t in orgs) {
-                    chips.add(Chip(avatar: const Icon(Icons.apartment, size: 16), label: Text(t)));
+                    chips.add(_compactTagChip(Icons.apartment, t));
                   }
                   for (final t in locs) {
-                    chips.add(Chip(avatar: const Icon(Icons.place, size: 16), label: Text(t)));
+                    chips.add(_compactTagChip(Icons.place, t));
                   }
                   if (chips.isEmpty) return const SizedBox.shrink();
                   return Padding(
-                    padding: const EdgeInsets.only(bottom: 8.0),
-                    child: Wrap(spacing: 8, runSpacing: 8, children: chips),
+                    padding: const EdgeInsets.only(bottom: 6),
+                    child: Wrap(spacing: 6, runSpacing: 4, children: chips),
                   );
                 },
               ),
@@ -163,28 +222,40 @@ class _ArticleDetailPageState extends State<ArticleDetailPage> {
                 if (a.publishedAt != null) ...[
                   const Icon(Icons.event, size: 18, color: Colors.grey),
                   const SizedBox(width: 6),
-                  Text(_formatDate(a.publishedAt!), style: Theme.of(context).textTheme.bodySmall?.copyWith(color: DS.textDim)),
+                  Text(_formatDate(a.publishedAt!),
+                      style: Theme.of(context)
+                          .textTheme
+                          .bodySmall
+                          ?.copyWith(color: DS.textDim)),
                 ],
                 if ((a.kind ?? '').isNotEmpty) ...[
                   const SizedBox(width: 12),
                   Chip(label: Text(a.kind == 'opini' ? 'Opini' : 'Artikel')),
                 ],
               ]),
-              
+
               // canonical URL removed to avoid duplication with main URL
               // Show excerpt only when there is no rich description to avoid duplication
-              if ((a.excerpt != null && a.excerpt!.trim().isNotEmpty) && (_renderDesc == null || _renderDesc!.trim().isEmpty)) ...[
+              if ((a.excerpt != null && a.excerpt!.trim().isNotEmpty) &&
+                  (_renderDesc == null || _renderDesc!.trim().isEmpty)) ...[
                 const SizedBox(height: Spacing.md),
                 // Render excerpt as plain text (usually short summary)
                 Text(a.excerpt!, style: TextStyle(color: DS.text)),
               ],
               if (_renderDesc != null && _renderDesc!.trim().isNotEmpty) ...[
                 const SizedBox(height: Spacing.md),
-                // Render rich HTML description from the editor
-                HtmlWidget(
-                  _renderDesc!,
-                  textStyle: TextStyle(color: DS.text),
-                ),
+                if (kIsWeb)
+                  HtmlWidget(
+                    _renderDesc!,
+                    textStyle: TextStyle(color: DS.text),
+                  )
+                else
+                  SelectionArea(
+                    child: HtmlWidget(
+                      _renderDesc!,
+                      textStyle: TextStyle(color: DS.text),
+                    ),
+                  ),
               ],
             ]),
           ),
@@ -211,4 +282,3 @@ String _guessImageMime(String path) {
   if (p.endsWith('.svg')) return 'image/svg+xml';
   return 'image/*';
 }
-

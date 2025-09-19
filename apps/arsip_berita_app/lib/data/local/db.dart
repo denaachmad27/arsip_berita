@@ -5,11 +5,31 @@ import 'package:path_provider/path_provider.dart';
 
 class LocalDatabase {
   Database? _db;
+  String? _dbPath;
+
+  Future<String> databasePath() async {
+    if (_dbPath != null) return _dbPath!;
+    final dir = await getApplicationDocumentsDirectory();
+    final path = p.join(dir.path, 'arsip_berita.db');
+    _dbPath = path;
+    return path;
+  }
+
+  Future<Directory> documentsDirectory() async {
+    return await getApplicationDocumentsDirectory();
+  }
+
+  Future<void> close() async {
+    final db = _db;
+    if (db != null) {
+      await db.close();
+      _db = null;
+    }
+  }
 
   Future<void> init() async {
     if (_db != null) return;
-    final dir = await getApplicationDocumentsDirectory();
-    final path = p.join(dir.path, 'arsip_berita.db');
+    final path = await databasePath();
     print('Database path: $path');
     var exists = await databaseExists(path);
     if (!exists) {
@@ -54,8 +74,10 @@ class LocalDatabase {
             updated_at text not null
           );
         ''');
-        await db.execute('create index idx_articles_updated_at on articles(updated_at desc)');
-        await db.execute('create index idx_articles_canonical on articles(canonical_url)');
+        await db.execute(
+            'create index idx_articles_updated_at on articles(updated_at desc)');
+        await db.execute(
+            'create index idx_articles_canonical on articles(canonical_url)');
 
         // entities
         await db.execute('''
@@ -201,12 +223,17 @@ class LocalDatabase {
 
     // If the active DB is empty but a legacy DB exists with data, restore from legacy by replacing the file
     try {
-      final rows = await _db!.rawQuery('select count(*) as c from sqlite_master where type = "table" and name = "articles"');
-      final hasArticlesTable = ((rows.first['c'] as int?) ?? (rows.first['c'] as num?)?.toInt() ?? 0) > 0;
+      final rows = await _db!.rawQuery(
+          'select count(*) as c from sqlite_master where type = "table" and name = "articles"');
+      final hasArticlesTable = ((rows.first['c'] as int?) ??
+              (rows.first['c'] as num?)?.toInt() ??
+              0) >
+          0;
       int currentCount = 0;
       if (hasArticlesTable) {
         final r2 = await _db!.rawQuery('select count(*) as c from articles');
-        currentCount = (r2.first['c'] as int?) ?? (r2.first['c'] as num?)?.toInt() ?? 0;
+        currentCount =
+            (r2.first['c'] as int?) ?? (r2.first['c'] as num?)?.toInt() ?? 0;
       }
       if (currentCount == 0) {
         final legacyDir = await getDatabasesPath();
@@ -215,18 +242,28 @@ class LocalDatabase {
           // Check legacy has data
           final legacyDb = await openDatabase(legacyPath);
           try {
-            final r3 = await legacyDb.rawQuery('select count(*) as c from sqlite_master where type = "table" and name = "articles"');
-            final legacyHasArticles = ((r3.first['c'] as int?) ?? (r3.first['c'] as num?)?.toInt() ?? 0) > 0;
+            final r3 = await legacyDb.rawQuery(
+                'select count(*) as c from sqlite_master where type = "table" and name = "articles"');
+            final legacyHasArticles = ((r3.first['c'] as int?) ??
+                    (r3.first['c'] as num?)?.toInt() ??
+                    0) >
+                0;
             int legacyCount = 0;
             if (legacyHasArticles) {
-              final r4 = await legacyDb.rawQuery('select count(*) as c from articles');
-              legacyCount = (r4.first['c'] as int?) ?? (r4.first['c'] as num?)?.toInt() ?? 0;
+              final r4 =
+                  await legacyDb.rawQuery('select count(*) as c from articles');
+              legacyCount = (r4.first['c'] as int?) ??
+                  (r4.first['c'] as num?)?.toInt() ??
+                  0;
             }
             if (legacyCount > 0) {
-              print('Detected empty current DB, restoring from legacy DB at: ' + legacyPath);
+              print('Detected empty current DB, restoring from legacy DB at: ' +
+                  legacyPath);
               await _db!.close();
               await File(legacyPath).copy(path);
-              _db = await openDatabase(path, version: 6,
+              _db = await openDatabase(
+                path,
+                version: 6,
                 onCreate: (db, v) async {},
                 onUpgrade: (db, oldV, newV) async {},
               );
@@ -243,30 +280,45 @@ class LocalDatabase {
   }
 
   Future<void> upsertArticle(ArticleModel a) async {
-    final db = _db; if (db == null) return;
+    final db = _db;
+    if (db == null) return;
     final data = a.toMap()..['updated_at'] = DateTime.now().toIso8601String();
     print('Upserting article: $data');
-    await db.insert('articles', data, conflictAlgorithm: ConflictAlgorithm.replace);
+    await db.insert('articles', data,
+        conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   Future<MediaModel?> getMediaById(int id) async {
-    final db = _db; if (db == null) return null;
-    final rows = await db.query('media', where: 'id = ?', whereArgs: [id], limit: 1);
+    final db = _db;
+    if (db == null) return null;
+    final rows =
+        await db.query('media', where: 'id = ?', whereArgs: [id], limit: 1);
     if (rows.isEmpty) return null;
     final r = rows.first;
-    return MediaModel(id: r['id'] as int, name: r['name'] as String, type: r['type'] as String);
+    return MediaModel(
+        id: r['id'] as int,
+        name: r['name'] as String,
+        type: r['type'] as String);
   }
 
   Future<ArticleModel?> getArticleById(String id) async {
-    final db = _db; if (db == null) return null;
-    final rows = await db.query('articles', where: 'id = ?', whereArgs: [id], limit: 1);
+    final db = _db;
+    if (db == null) return null;
+    final rows =
+        await db.query('articles', where: 'id = ?', whereArgs: [id], limit: 1);
     if (rows.isEmpty) return null;
     return ArticleModel.fromMap(rows.first);
   }
 
-  Future<List<ArticleWithMedium>> searchArticles({String q = '', String? mediaType, DateTime? startDate, DateTime? endDate}) async {
-    final db = _db; if (db == null) return [];
-    final where = <String>[]; final args = <Object?>[];
+  Future<List<ArticleWithMedium>> searchArticles(
+      {String q = '',
+      String? mediaType,
+      DateTime? startDate,
+      DateTime? endDate}) async {
+    final db = _db;
+    if (db == null) return [];
+    final where = <String>[];
+    final args = <Object?>[];
     if (q.isNotEmpty) {
       final query = '%${q.replaceAll('%', '\\%').replaceAll('_', '\\_')}%';
       where.add("lower(a.title) like lower(?) escape '\\'");
@@ -278,11 +330,13 @@ class LocalDatabase {
     }
     if (startDate != null) {
       where.add('(a.published_at >= ?)');
-      args.add(DateTime(startDate.year, startDate.month, startDate.day).toIso8601String());
+      args.add(DateTime(startDate.year, startDate.month, startDate.day)
+          .toIso8601String());
     }
     if (endDate != null) {
       // include endDate full day by adding 1 day and using < next day
-      final next = DateTime(endDate.year, endDate.month, endDate.day).add(const Duration(days: 1));
+      final next = DateTime(endDate.year, endDate.month, endDate.day)
+          .add(const Duration(days: 1));
       where.add('(a.published_at < ?)');
       args.add(next.toIso8601String());
     }
@@ -294,160 +348,228 @@ class LocalDatabase {
       $whereSql
       order by a.updated_at desc
     ''', args);
-    return rows.map((r) => ArticleWithMedium(
-      ArticleModel.fromMap(r),
-      r['media_name'] == null ? null : MediaModel(id: (r['media_id'] as int?) ?? 0, name: r['media_name'] as String, type: r['media_type'] as String),
-    )).toList();
+    return rows
+        .map((r) => ArticleWithMedium(
+              ArticleModel.fromMap(r),
+              r['media_name'] == null
+                  ? null
+                  : MediaModel(
+                      id: (r['media_id'] as int?) ?? 0,
+                      name: r['media_name'] as String,
+                      type: r['media_type'] as String),
+            ))
+        .toList();
   }
 
   Future<bool> existsByCanonicalUrl(String canonicalUrl) async {
-    final db = _db; if (db == null) return false;
-    final rows = await db.query('articles', columns: ['id'], where: 'lower(canonical_url) = ?', whereArgs: [canonicalUrl.toLowerCase()]);
+    final db = _db;
+    if (db == null) return false;
+    final rows = await db.query('articles',
+        columns: ['id'],
+        where: 'lower(canonical_url) = ?',
+        whereArgs: [canonicalUrl.toLowerCase()]);
     return rows.isNotEmpty;
   }
 
   Future<String?> findArticleIdByCanonicalUrl(String canonicalUrl) async {
-    final db = _db; if (db == null) return null;
-    final rows = await db.query('articles', columns: ['id'], where: 'lower(canonical_url) = ?', whereArgs: [canonicalUrl.toLowerCase()], limit: 1);
+    final db = _db;
+    if (db == null) return null;
+    final rows = await db.query('articles',
+        columns: ['id'],
+        where: 'lower(canonical_url) = ?',
+        whereArgs: [canonicalUrl.toLowerCase()],
+        limit: 1);
     if (rows.isEmpty) return null;
     return rows.first['id'] as String?;
   }
 
   // Suggestions
   Future<List<String>> suggestAuthors(String prefix, {int limit = 10}) async {
-    final db = _db; if (db == null) return [];
+    final db = _db;
+    if (db == null) return [];
     final qp = '%${prefix.replaceAll('%', '\\%').replaceAll('_', '\\_')}%';
-    final rows = await db.rawQuery("select name from authors where name like ? escape '\\' order by name asc limit ?", [qp, limit]);
+    final rows = await db.rawQuery(
+        "select name from authors where name like ? escape '\\' order by name asc limit ?",
+        [qp, limit]);
     return rows.map((e) => e['name'] as String).toList();
   }
 
   // Stats
   Future<int> totalArticles() async {
-    final db = _db; if (db == null) return 0;
+    final db = _db;
+    if (db == null) return 0;
     final rows = await db.rawQuery('select count(*) as c from articles');
     return (rows.first['c'] as int?) ?? (rows.first['c'] as num?)?.toInt() ?? 0;
   }
 
   Future<int> thisMonthArticles() async {
-    final db = _db; if (db == null) return 0;
+    final db = _db;
+    if (db == null) return 0;
     final now = DateTime.now();
     final start = DateTime(now.year, now.month, 1).toIso8601String();
     final next = DateTime(now.year, now.month + 1, 1).toIso8601String();
-    final rows = await db.rawQuery('select count(*) as c from articles where published_at >= ? and published_at < ?', [start, next]);
+    final rows = await db.rawQuery(
+        'select count(*) as c from articles where published_at >= ? and published_at < ?',
+        [start, next]);
     return (rows.first['c'] as int?) ?? (rows.first['c'] as num?)?.toInt() ?? 0;
   }
 
   Future<int> distinctMediaCount() async {
-    final db = _db; if (db == null) return 0;
-    final rows = await db.rawQuery('select count(distinct media_id) as c from articles where media_id is not null');
+    final db = _db;
+    if (db == null) return 0;
+    final rows = await db.rawQuery(
+        'select count(distinct media_id) as c from articles where media_id is not null');
     return (rows.first['c'] as int?) ?? (rows.first['c'] as num?)?.toInt() ?? 0;
   }
 
   Future<List<String>> suggestPeople(String prefix, {int limit = 10}) async {
-    final db = _db; if (db == null) return [];
+    final db = _db;
+    if (db == null) return [];
     final qp = '%${prefix.replaceAll('%', '\\%').replaceAll('_', '\\_')}%';
-    final rows = await db.rawQuery("select name from people where name like ? escape '\\' order by name asc limit ?", [qp, limit]);
+    final rows = await db.rawQuery(
+        "select name from people where name like ? escape '\\' order by name asc limit ?",
+        [qp, limit]);
     return rows.map((e) => e['name'] as String).toList();
   }
 
-  Future<List<String>> suggestOrganizations(String prefix, {int limit = 10}) async {
-    final db = _db; if (db == null) return [];
+  Future<List<String>> suggestOrganizations(String prefix,
+      {int limit = 10}) async {
+    final db = _db;
+    if (db == null) return [];
     final qp = '%${prefix.replaceAll('%', '\\%').replaceAll('_', '\\_')}%';
-    final rows = await db.rawQuery("select name from organizations where name like ? escape '\\' order by name asc limit ?", [qp, limit]);
+    final rows = await db.rawQuery(
+        "select name from organizations where name like ? escape '\\' order by name asc limit ?",
+        [qp, limit]);
     return rows.map((e) => e['name'] as String).toList();
   }
 
   Future<List<String>> suggestLocations(String prefix, {int limit = 10}) async {
-    final db = _db; if (db == null) return [];
+    final db = _db;
+    if (db == null) return [];
     final qp = '%${prefix.replaceAll('%', '\\%').replaceAll('_', '\\_')}%';
-    final rows = await db.rawQuery("select name from locations where name like ? escape '\\' order by name asc limit ?", [qp, limit]);
+    final rows = await db.rawQuery(
+        "select name from locations where name like ? escape '\\' order by name asc limit ?",
+        [qp, limit]);
     return rows.map((e) => e['name'] as String).toList();
   }
 
   // Upsert helpers for entities
   Future<int> upsertMedia(String name, String type) async {
-    final db = _db; if (db == null) return 0;
-    final norm = name.trim(); if (norm.isEmpty) return 0;
-    final existing = await db.query('media', where: 'lower(name) = ?', whereArgs: [norm.toLowerCase()], limit: 1);
+    final db = _db;
+    if (db == null) return 0;
+    final norm = name.trim();
+    if (norm.isEmpty) return 0;
+    final existing = await db.query('media',
+        where: 'lower(name) = ?', whereArgs: [norm.toLowerCase()], limit: 1);
     if (existing.isNotEmpty) return existing.first['id'] as int;
     return await db.insert('media', {'name': norm, 'type': type});
   }
 
   Future<int> upsertAuthorByName(String name) async {
-    final db = _db; if (db == null) return 0;
-    final norm = name.trim(); if (norm.isEmpty) return 0;
-    final existing = await db.query('authors', where: 'lower(name) = ?', whereArgs: [norm.toLowerCase()], limit: 1);
+    final db = _db;
+    if (db == null) return 0;
+    final norm = name.trim();
+    if (norm.isEmpty) return 0;
+    final existing = await db.query('authors',
+        where: 'lower(name) = ?', whereArgs: [norm.toLowerCase()], limit: 1);
     if (existing.isNotEmpty) return existing.first['id'] as int;
     return await db.insert('authors', {'name': norm});
   }
 
   Future<int> upsertPersonByName(String name) async {
-    final db = _db; if (db == null) return 0;
-    final norm = name.trim(); if (norm.isEmpty) return 0;
-    final existing = await db.query('people', where: 'lower(name) = ?', whereArgs: [norm.toLowerCase()], limit: 1);
+    final db = _db;
+    if (db == null) return 0;
+    final norm = name.trim();
+    if (norm.isEmpty) return 0;
+    final existing = await db.query('people',
+        where: 'lower(name) = ?', whereArgs: [norm.toLowerCase()], limit: 1);
     if (existing.isNotEmpty) return existing.first['id'] as int;
     return await db.insert('people', {'name': norm});
   }
 
   Future<int> upsertOrganizationByName(String name) async {
-    final db = _db; if (db == null) return 0;
-    final norm = name.trim(); if (norm.isEmpty) return 0;
-    final existing = await db.query('organizations', where: 'lower(name) = ?', whereArgs: [norm.toLowerCase()], limit: 1);
+    final db = _db;
+    if (db == null) return 0;
+    final norm = name.trim();
+    if (norm.isEmpty) return 0;
+    final existing = await db.query('organizations',
+        where: 'lower(name) = ?', whereArgs: [norm.toLowerCase()], limit: 1);
     if (existing.isNotEmpty) return existing.first['id'] as int;
     return await db.insert('organizations', {'name': norm});
   }
 
   Future<int> upsertLocationByName(String name) async {
-    final db = _db; if (db == null) return 0;
-    final norm = name.trim(); if (norm.isEmpty) return 0;
-    final existing = await db.query('locations', where: 'lower(name) = ?', whereArgs: [norm.toLowerCase()], limit: 1);
+    final db = _db;
+    if (db == null) return 0;
+    final norm = name.trim();
+    if (norm.isEmpty) return 0;
+    final existing = await db.query('locations',
+        where: 'lower(name) = ?', whereArgs: [norm.toLowerCase()], limit: 1);
     if (existing.isNotEmpty) return existing.first['id'] as int;
     return await db.insert('locations', {'name': norm});
   }
 
   // Link helpers (replace links)
   Future<void> setArticleAuthors(String articleId, List<int> authorIds) async {
-    final db = _db; if (db == null) return;
+    final db = _db;
+    if (db == null) return;
     final batch = db.batch();
-    batch.delete('articles_authors', where: 'article_id = ?', whereArgs: [articleId]);
+    batch.delete('articles_authors',
+        where: 'article_id = ?', whereArgs: [articleId]);
     for (final id in authorIds.toSet()) {
-      batch.insert('articles_authors', {'article_id': articleId, 'author_id': id}, conflictAlgorithm: ConflictAlgorithm.ignore);
+      batch.insert(
+          'articles_authors', {'article_id': articleId, 'author_id': id},
+          conflictAlgorithm: ConflictAlgorithm.ignore);
     }
     await batch.commit(noResult: true);
   }
 
   Future<void> setArticlePeople(String articleId, List<int> personIds) async {
-    final db = _db; if (db == null) return;
+    final db = _db;
+    if (db == null) return;
     final batch = db.batch();
-    batch.delete('articles_people', where: 'article_id = ?', whereArgs: [articleId]);
+    batch.delete('articles_people',
+        where: 'article_id = ?', whereArgs: [articleId]);
     for (final id in personIds.toSet()) {
-      batch.insert('articles_people', {'article_id': articleId, 'person_id': id}, conflictAlgorithm: ConflictAlgorithm.ignore);
+      batch.insert(
+          'articles_people', {'article_id': articleId, 'person_id': id},
+          conflictAlgorithm: ConflictAlgorithm.ignore);
     }
     await batch.commit(noResult: true);
   }
 
-  Future<void> setArticleOrganizations(String articleId, List<int> orgIds) async {
-    final db = _db; if (db == null) return;
+  Future<void> setArticleOrganizations(
+      String articleId, List<int> orgIds) async {
+    final db = _db;
+    if (db == null) return;
     final batch = db.batch();
-    batch.delete('articles_organizations', where: 'article_id = ?', whereArgs: [articleId]);
+    batch.delete('articles_organizations',
+        where: 'article_id = ?', whereArgs: [articleId]);
     for (final id in orgIds.toSet()) {
-      batch.insert('articles_organizations', {'article_id': articleId, 'organization_id': id}, conflictAlgorithm: ConflictAlgorithm.ignore);
+      batch.insert('articles_organizations',
+          {'article_id': articleId, 'organization_id': id},
+          conflictAlgorithm: ConflictAlgorithm.ignore);
     }
     await batch.commit(noResult: true);
   }
 
   Future<void> setArticleLocations(String articleId, List<int> locIds) async {
-    final db = _db; if (db == null) return;
+    final db = _db;
+    if (db == null) return;
     final batch = db.batch();
-    batch.delete('articles_locations', where: 'article_id = ?', whereArgs: [articleId]);
+    batch.delete('articles_locations',
+        where: 'article_id = ?', whereArgs: [articleId]);
     for (final id in locIds.toSet()) {
-      batch.insert('articles_locations', {'article_id': articleId, 'location_id': id}, conflictAlgorithm: ConflictAlgorithm.ignore);
+      batch.insert(
+          'articles_locations', {'article_id': articleId, 'location_id': id},
+          conflictAlgorithm: ConflictAlgorithm.ignore);
     }
     await batch.commit(noResult: true);
   }
 
   Future<List<String>> authorsForArticle(String articleId) async {
-    final db = _db; if (db == null) return [];
+    final db = _db;
+    if (db == null) return [];
     final rows = await db.rawQuery('''
       select au.name from authors au
       inner join articles_authors aa on aa.author_id = au.id
@@ -458,7 +580,8 @@ class LocalDatabase {
   }
 
   Future<List<String>> peopleForArticle(String articleId) async {
-    final db = _db; if (db == null) return [];
+    final db = _db;
+    if (db == null) return [];
     final rows = await db.rawQuery('''
       select p.name from people p
       inner join articles_people ap on ap.person_id = p.id
@@ -469,7 +592,8 @@ class LocalDatabase {
   }
 
   Future<List<String>> orgsForArticle(String articleId) async {
-    final db = _db; if (db == null) return [];
+    final db = _db;
+    if (db == null) return [];
     final rows = await db.rawQuery('''
       select o.name from organizations o
       inner join articles_organizations ao on ao.organization_id = o.id
@@ -480,7 +604,8 @@ class LocalDatabase {
   }
 
   Future<List<String>> locationsForArticle(String articleId) async {
-    final db = _db; if (db == null) return [];
+    final db = _db;
+    if (db == null) return [];
     final rows = await db.rawQuery('''
       select l.name from locations l
       inner join articles_locations al on al.location_id = l.id
@@ -525,32 +650,35 @@ class ArticleModel {
   }) : updatedAt = updatedAt ?? DateTime.now();
 
   Map<String, Object?> toMap() => {
-    'id': id,
-    'title': title,
-    'url': url,
-    'canonical_url': canonicalUrl,
-    'media_id': mediaId,
-    'kind': kind,
-    'published_at': publishedAt?.toIso8601String(),
-    'description': description,
-    'excerpt': excerpt,
-    'image_path': imagePath,
-    'updated_at': updatedAt.toIso8601String(),
-  };
+        'id': id,
+        'title': title,
+        'url': url,
+        'canonical_url': canonicalUrl,
+        'media_id': mediaId,
+        'kind': kind,
+        'published_at': publishedAt?.toIso8601String(),
+        'description': description,
+        'excerpt': excerpt,
+        'image_path': imagePath,
+        'updated_at': updatedAt.toIso8601String(),
+      };
 
   factory ArticleModel.fromMap(Map<String, Object?> m) => ArticleModel(
-    id: m['id'] as String,
-    title: m['title'] as String,
-    url: m['url'] as String,
-    canonicalUrl: m['canonical_url'] as String?,
-    mediaId: m['media_id'] as int?,
-    kind: (m['kind'] as String?) ?? 'artikel',
-    publishedAt: (m['published_at'] as String?) == null ? null : DateTime.tryParse(m['published_at'] as String),
-    description: m['description'] as String?,
-    excerpt: m['excerpt'] as String?,
-    imagePath: m['image_path'] as String?,
-    updatedAt: DateTime.tryParse((m['updated_at'] as String?) ?? '') ?? DateTime.now(),
-  );
+        id: m['id'] as String,
+        title: m['title'] as String,
+        url: m['url'] as String,
+        canonicalUrl: m['canonical_url'] as String?,
+        mediaId: m['media_id'] as int?,
+        kind: (m['kind'] as String?) ?? 'artikel',
+        publishedAt: (m['published_at'] as String?) == null
+            ? null
+            : DateTime.tryParse(m['published_at'] as String),
+        description: m['description'] as String?,
+        excerpt: m['excerpt'] as String?,
+        imagePath: m['image_path'] as String?,
+        updatedAt: DateTime.tryParse((m['updated_at'] as String?) ?? '') ??
+            DateTime.now(),
+      );
 }
 
 class ArticleWithMedium {
