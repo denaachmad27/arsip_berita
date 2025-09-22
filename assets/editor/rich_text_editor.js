@@ -68,19 +68,6 @@ var editor = {
         this._updateEditorState();
         this._scheduleHeightNotification(true);
 
-        // Attach image click to preview overlay (delegated on editor container)
-        var overlay = document.getElementById('preview-overlay');
-        var overlayImg = document.getElementById('preview-image');
-        if (overlay && overlayImg) {
-            overlay.addEventListener('click', function(){ overlay.style.display = 'none'; overlayImg.src=''; });
-            this._textField.addEventListener('click', function(e){
-                var t = e.target;
-                if (t && t.tagName && t.tagName.toLowerCase() === 'img') {
-                    overlayImg.src = t.src;
-                    overlay.style.display = 'flex';
-                }
-            });
-        }
 
 
         try {
@@ -532,16 +519,20 @@ var editor = {
             return;
         }
 
-        if (!wrapper.querySelector('.editor-resize-handle--bottom-right')) {
-            var br = document.createElement('span');
-            br.className = 'editor-resize-handle editor-resize-handle--bottom-right';
-            wrapper.appendChild(br);
-        }
+        var handleClasses = [
+            'editor-resize-handle--top-left',
+            'editor-resize-handle--top-right',
+            'editor-resize-handle--bottom-right',
+            'editor-resize-handle--bottom-left'
+        ];
 
-        if (!wrapper.querySelector('.editor-resize-handle--top-right')) {
-            var tr = document.createElement('span');
-            tr.className = 'editor-resize-handle editor-resize-handle--top-right';
-            wrapper.appendChild(tr);
+        for (var i = 0; i < handleClasses.length; i++) {
+            var cls = handleClasses[i];
+            if (!wrapper.querySelector('.' + cls)) {
+                var handle = document.createElement('span');
+                handle.className = 'editor-resize-handle ' + cls;
+                wrapper.appendChild(handle);
+            }
         }
     },
 

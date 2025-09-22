@@ -153,6 +153,8 @@ img.resizable {
 
   pointer-events: none;
 
+  cursor: pointer;
+
 }
 
 .editor-resize-handle--bottom-right {
@@ -168,6 +170,22 @@ img.resizable {
   right: -6px;
 
   top: -6px;
+
+}
+
+.editor-resize-handle--top-left {
+
+  left: -6px;
+
+  top: -6px;
+
+}
+
+.editor-resize-handle--bottom-left {
+
+  left: -6px;
+
+  bottom: -6px;
 
 }
 
@@ -196,3 +214,13 @@ img.resizable {
     transform: rotate(270deg);
 }
 
+
+.editor-resize-handle--top-left,
+.editor-resize-handle--bottom-right {
+  cursor: nwse-resize;
+}
+
+.editor-resize-handle--top-right,
+.editor-resize-handle--bottom-left {
+  cursor: nesw-resize;
+}

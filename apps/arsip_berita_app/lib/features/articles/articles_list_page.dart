@@ -36,7 +36,6 @@ class _ArticlesListPageState extends State<ArticlesListPage> {
   DateTime? _endDate;
   int _statTotal = 0;
   int _statMonth = 0;
-  int _statMedia = 0;
 
   @override
   void initState() {
@@ -74,15 +73,9 @@ class _ArticlesListPageState extends State<ArticlesListPage> {
       if (d == null) return false;
       return !d.isBefore(startMonth) && d.isBefore(nextMonth);
     }).length;
-    final media = _results
-        .map((e) => e.medium?.id)
-        .where((id) => id != null)
-        .toSet()
-        .length;
     setState(() {
       _statTotal = total;
       _statMonth = month;
-      _statMedia = media;
     });
   }
 
@@ -492,13 +485,6 @@ class _ArticlesListPageState extends State<ArticlesListPage> {
                     value: _statMonth.toString(),
                     icon: Icons.calendar_today,
                     accent: DS.accent2)),
-            const SizedBox(width: Spacing.sm),
-            Expanded(
-                child: _StatCard(
-                    label: 'Media',
-                    value: _statMedia.toString(),
-                    icon: Icons.apartment,
-                    accent: DS.accent2)),
           ]),
           const SizedBox(height: Spacing.md),
           LayoutBuilder(builder: (context, constraints) {
@@ -553,7 +539,7 @@ class _ArticlesListPageState extends State<ArticlesListPage> {
                     const SizedBox(height: Spacing.sm),
                     UiInput(
                       controller: _q,
-                      hint: 'Cari judulâ€¦',
+                      hint: 'Cari Judul',
                       prefix: Icons.search,
                       contentPadding: const EdgeInsets.symmetric(
                           horizontal: 12, vertical: 12),
@@ -615,7 +601,7 @@ class _ArticlesListPageState extends State<ArticlesListPage> {
                   const SizedBox(height: Spacing.sm),
                   UiInput(
                     controller: _q,
-                    hint: 'Cari judulâ€¦',
+                    hint: 'Cari Judul',
                     prefix: Icons.search,
                     contentPadding: const EdgeInsets.symmetric(
                         horizontal: 12, vertical: 12),
