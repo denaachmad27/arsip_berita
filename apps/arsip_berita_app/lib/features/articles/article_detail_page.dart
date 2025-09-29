@@ -248,12 +248,62 @@ class _ArticleDetailPageState extends State<ArticleDetailPage> {
                   HtmlWidget(
                     _renderDesc!,
                     textStyle: TextStyle(color: DS.text),
+                    customWidgetBuilder: (element) {
+                      if (element.localName == 'img') {
+                        final src = element.attributes['src'];
+                        if (src == null) return null;
+                        final widthStr = element.attributes['width'];
+                        double? width;
+                        if (widthStr != null) {
+                          width = double.tryParse(widthStr);
+                        }
+                        final imageWidget = src.startsWith('data:')
+                            ? Image.memory(
+                                UriData.parse(src).contentAsBytes(),
+                                width: width,
+                              )
+                            : Image.network(
+                                src,
+                                width: width,
+                              );
+                        return Align(
+                          alignment: Alignment.centerLeft,
+                          child: imageWidget,
+                        );
+                      }
+                      return null;
+                    },
                   )
                 else
                   SelectionArea(
                     child: HtmlWidget(
                       _renderDesc!,
                       textStyle: TextStyle(color: DS.text),
+                      customWidgetBuilder: (element) {
+                        if (element.localName == 'img') {
+                          final src = element.attributes['src'];
+                          if (src == null) return null;
+                          final widthStr = element.attributes['width'];
+                          double? width;
+                          if (widthStr != null) {
+                            width = double.tryParse(widthStr);
+                          }
+                          final imageWidget = src.startsWith('data:')
+                              ? Image.memory(
+                                  UriData.parse(src).contentAsBytes(),
+                                  width: width,
+                                )
+                              : Image.network(
+                                  src,
+                                  width: width,
+                                );
+                          return Align(
+                            alignment: Alignment.centerLeft,
+                            child: imageWidget,
+                          );
+                        }
+                        return null;
+                      },
                     ),
                   ),
               ],

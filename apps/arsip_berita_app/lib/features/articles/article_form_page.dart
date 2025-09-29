@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show defaultTargetPlatform, kIsWeb;
 import 'dart:io';
 import 'dart:convert';
 import 'dart:typed_data';
@@ -63,6 +63,13 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
   final GlobalKey _descLayoutKey = GlobalKey();
   CommonEditorOperations? _commonEditorOps;
   double _editorViewportHeight = 360;
+  static const double _defaultImageWidth = 320;
+  static const double _minImageWidth = 120;
+  static const double _maxImageWidth = 800;
+  final Map<String, double> _imageWidths = {};
+  String? _selectedImageNodeId;
+  double? _activeImageWidth;
+  late final VoidCallback _selectionListener;
   bool _prefillInProgress = false;
 
   bool get _isEditing => widget.article != null;
@@ -71,18 +78,23 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
         ParagraphNode(id: Editor.createNodeId(), text: AttributedText()),
       ]);
 
+  DocumentLayout _resolveDocumentLayout() {
+    final layoutState = _descLayoutKey.currentState;
+    if (layoutState == null) {
+      throw StateError('Editor layout is not available yet');
+    }
+    if (layoutState is! DocumentLayout) {
+      throw StateError('Editor layout key is not bound to a DocumentLayout');
+    }
+    return layoutState as DocumentLayout;
+  }
+
   CommonEditorOperations get _editorOps =>
       _commonEditorOps ??= CommonEditorOperations(
         document: _descDocument,
         editor: _descEditor,
         composer: _descComposer,
-        documentLayoutResolver: () {
-          final layout = _descLayoutKey.currentState;
-          if (layout is! DocumentLayout) {
-            throw StateError('Editor layout is not available yet');
-          }
-          return layout;
-        },
+        documentLayoutResolver: _resolveDocumentLayout,
       );
 
   void _invalidateEditorOps() {
@@ -90,9 +102,15 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
   }
 
   void _replaceDocument(MutableDocument document) {
+    _descComposer.selectionNotifier.removeListener(_selectionListener);
     _descComposer.dispose();
     _descDocument = document;
     _descComposer = MutableDocumentComposer();
+    _descComposer.selectionNotifier.addListener(_selectionListener);
+    _imageWidths.clear();
+    _selectedImageNodeId = null;
+    _activeImageWidth = null;
+    _populateImageWidthCache();
     _descEditor = createDefaultDocumentEditor(
         document: _descDocument, composer: _descComposer);
     _invalidateEditorOps();
@@ -113,12 +131,23 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
       return;
     }
     try {
+      final imageWidths = _extractImageWidths(trimmed);
       final markdown = html2md.convert(trimmed);
       final doc = deserializeMarkdownToDocument(markdown,
           syntax: MarkdownSyntax.superEditor);
-      setState(() {
-        _replaceDocument(doc);
-      });
+      _replaceDocument(doc);
+      if (imageWidths.isNotEmpty) {
+        for (var i = 0; i < _descDocument.nodeCount; i++) {
+          final node = _descDocument.getNodeAt(i);
+          if (node is ImageNode) {
+            final width = imageWidths[node.imageUrl];
+            if (width != null) {
+              _applyWidthToImageNode(node.id, width);
+            }
+          }
+        }
+      }
+      setState(() {});
       _desc.text = trimmed;
     } catch (err) {
       debugPrint('Gagal memuat HTML ke editor: ' + err.toString());
@@ -142,10 +171,237 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
     if (markdown.trim().isEmpty) {
       return null;
     }
-    return md.markdownToHtml(
+    var html = md.markdownToHtml(
       markdown,
       extensionSet: md.ExtensionSet.gitHubWeb,
     );
+    html = _injectImageWidthsIntoHtml(html);
+    return html;
+  }
+
+  void _populateImageWidthCache() {
+    for (final node in _descDocument) {
+      if (node is ImageNode) {
+        final width = node.getMetadataValue('width');
+        if (width is num) {
+          _imageWidths[node.id] = width.toDouble();
+        }
+      }
+    }
+  }
+
+  double? _imageWidthFor(String nodeId) {
+    final cached = _imageWidths[nodeId];
+    if (cached != null) {
+      return cached;
+    }
+    final node = _descDocument.getNodeById(nodeId);
+    if (node is ImageNode) {
+      final width = node.getMetadataValue('width');
+      if (width is num) {
+        final value = width.toDouble();
+        _imageWidths[node.id] = value;
+        return value;
+      }
+    }
+    return null;
+  }
+
+  Map<String, double> _extractImageWidths(String html) {
+    final result = <String, double>{};
+    final imgTagRegex = RegExp(r'<img[^>]*>', caseSensitive: false);
+    final srcRegex = RegExp('src=[\'"]([^\'"]+)[\'"]', caseSensitive: false);
+    final widthRegex =
+        RegExp('width=[\'"]([0-9]+(?:\\.[0-9]+)?)[\'"]', caseSensitive: false);
+    for (final match in imgTagRegex.allMatches(html)) {
+      final tag = match.group(0)!;
+      final srcMatch = srcRegex.firstMatch(tag);
+      if (srcMatch == null) {
+        continue;
+      }
+      final widthMatch = widthRegex.firstMatch(tag);
+      if (widthMatch == null) {
+        continue;
+      }
+      final value = double.tryParse(widthMatch.group(1)!);
+      if (value != null) {
+        result[srcMatch.group(1)!] = value;
+      }
+    }
+    return result;
+  }
+
+  String _ensureImageWidthAttribute(
+      String html, String imageUrl, double width) {
+    final widthText = width.toStringAsFixed(0);
+    final doubleQuoteKey = 'src="' + imageUrl + '"';
+    final singleQuoteKey = "src='" + imageUrl + "'";
+    var matchIndex = html.indexOf(doubleQuoteKey);
+    if (matchIndex == -1) {
+      matchIndex = html.indexOf(singleQuoteKey);
+    }
+    if (matchIndex == -1) {
+      return html;
+    }
+    final tagStart = html.lastIndexOf('<img', matchIndex);
+    if (tagStart == -1) {
+      return html;
+    }
+    final tagEnd = html.indexOf('>', matchIndex);
+    if (tagEnd == -1) {
+      return html;
+    }
+    final existingTag = html.substring(tagStart, tagEnd + 1);
+    final widthRegex =
+        RegExp('width=[\'"]([0-9]+(?:\\.[0-9]+)?)[\'"]', caseSensitive: false);
+    String newTag;
+    if (widthRegex.hasMatch(existingTag)) {
+      newTag =
+          existingTag.replaceFirst(widthRegex, 'width="' + widthText + '"');
+    } else {
+      final trimmedTag = existingTag.trimRight();
+      final closesSelf = trimmedTag.endsWith('/>');
+      final insertionIndex = closesSelf
+          ? existingTag.lastIndexOf('/>')
+          : existingTag.lastIndexOf('>');
+      if (insertionIndex == -1) {
+        return html;
+      }
+      newTag = existingTag.substring(0, insertionIndex) +
+          ' width="' +
+          widthText +
+          '"' +
+          existingTag.substring(insertionIndex);
+    }
+    return html.replaceFirst(existingTag, newTag);
+  }
+
+  String _injectImageWidthsIntoHtml(String html) {
+    if (_imageWidths.isEmpty) {
+      return html;
+    }
+    var updatedHtml = html;
+    for (final entry in _imageWidths.entries) {
+      final node = _descDocument.getNodeById(entry.key);
+      if (node is ImageNode) {
+        updatedHtml =
+            _ensureImageWidthAttribute(updatedHtml, node.imageUrl, entry.value);
+      }
+    }
+    return updatedHtml;
+  }
+
+  void _applyWidthToImageNode(String nodeId, double width) {
+    final node = _descDocument.getNodeById(nodeId);
+    if (node is! ImageNode) {
+      return;
+    }
+    final clampedWidth = width.clamp(_minImageWidth, _maxImageWidth).toDouble();
+    _imageWidths[nodeId] = clampedWidth;
+    final currentWidth = node.getMetadataValue('width');
+    if (currentWidth is num && currentWidth.toDouble() == clampedWidth) {
+      return;
+    }
+    final updatedNode =
+        node.copyWithAddedMetadata({'width': clampedWidth}) as ImageNode;
+    _descEditor.execute([
+      ReplaceNodeRequest(existingNodeId: nodeId, newNode: updatedNode),
+    ]);
+  }
+
+  void _updateActiveImageWidth(double width) {
+    final nodeId = _selectedImageNodeId;
+    if (nodeId == null) {
+      return;
+    }
+    final clampedWidth = width.clamp(_minImageWidth, _maxImageWidth).toDouble();
+    _applyWidthToImageNode(nodeId, clampedWidth);
+    setState(() {
+      _activeImageWidth = clampedWidth;
+    });
+  }
+
+  void _clearImageSelection() {
+    if (_selectedImageNodeId == null && _activeImageWidth == null) {
+      return;
+    }
+    setState(() {
+      _selectedImageNodeId = null;
+      _activeImageWidth = null;
+    });
+  }
+
+  void _handleSelectionChange() {
+    if (!mounted) {
+      return;
+    }
+    final selection = _descComposer.selection;
+    if (selection == null) {
+      if (_selectedImageNodeId != null) {
+        _clearImageSelection();
+      }
+      return;
+    }
+    final nodeId = selection.extent.nodeId;
+    final node = _descDocument.getNodeById(nodeId);
+    if (node is ImageNode) {
+      final width = _imageWidthFor(node.id) ?? _defaultImageWidth;
+      if (_imageWidths[node.id] != width) {
+        _applyWidthToImageNode(node.id, width);
+      }
+      if (_selectedImageNodeId != node.id || _activeImageWidth != width) {
+        setState(() {
+          _selectedImageNodeId = node.id;
+          _activeImageWidth = width;
+        });
+      }
+      return;
+    }
+    if (_selectedImageNodeId != null) {
+      _clearImageSelection();
+    }
+  }
+
+  Widget _buildImageResizeControls() {
+    if (_selectedImageNodeId == null || _activeImageWidth == null) {
+      return const SizedBox.shrink(key: ValueKey('image-resize-hidden'));
+    }
+    return Builder(builder: (context) {
+      final width =
+          _activeImageWidth!.clamp(_minImageWidth, _maxImageWidth).toDouble();
+      final labelStyle =
+          Theme.of(context).textTheme.bodySmall?.copyWith(color: DS.textDim);
+      return Column(
+        key: const ValueKey('image-resize-visible'),
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Divider(height: 1, thickness: 1, color: DS.border),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+            child: Row(
+              children: [
+                Text('Lebar gambar', style: labelStyle),
+                const Spacer(),
+                Text('${width.toInt()} px',
+                    style: Theme.of(context)
+                        .textTheme
+                        .bodySmall
+                        ?.copyWith(color: DS.text)),
+              ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+            child: Slider(
+              min: _minImageWidth,
+              max: _maxImageWidth,
+              value: width,
+              onChanged: _updateActiveImageWidth,
+            ),
+          ),
+        ],
+      );
+    });
   }
 
   void _toggleInlineAttribution(Attribution attribution) {
@@ -224,7 +480,27 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
     final ext = (picked.extension ?? '').toLowerCase();
     final mime = _mimeFromExtension(ext);
     final dataUri = 'data:' + mime + ';base64,' + base64Encode(bytes);
-    _editorOps.insertImage(dataUri);
+    final inserted = _editorOps.insertImage(dataUri);
+    if (!inserted) {
+      return;
+    }
+    final selectionAfterInsert = _descComposer.selection;
+    if (selectionAfterInsert != null) {
+      final nodeBefore =
+          _descDocument.getNodeBeforeById(selectionAfterInsert.extent.nodeId);
+      if (nodeBefore is ImageNode && nodeBefore.imageUrl == dataUri) {
+        final imageNodeWithWidth = nodeBefore.copyWithAddedMetadata({
+          'width': _defaultImageWidth,
+        }) as ImageNode;
+        _descEditor.execute([
+          ReplaceNodeRequest(
+              existingNodeId: nodeBefore.id, newNode: imageNodeWithWidth),
+        ]);
+        _imageWidths[nodeBefore.id] = _defaultImageWidth;
+        _activeImageWidth = _defaultImageWidth;
+        _selectedImageNodeId = nodeBefore.id;
+      }
+    }
     setState(() {});
   }
 
@@ -319,6 +595,9 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
   @override
   void initState() {
     super.initState();
+    _selectionListener = _handleSelectionChange;
+    _descComposer.selectionNotifier.addListener(_selectionListener);
+    _populateImageWidthCache();
     if (_isEditing) {
       _prefillInProgress = true;
       _loadArticleForEditing();
@@ -336,6 +615,7 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
     _peopleInput.dispose();
     _orgsInput.dispose();
     _locationInput.dispose();
+    _descComposer.selectionNotifier.removeListener(_selectionListener);
     _descComposer.dispose();
     _descEditorFocusNode.dispose();
     _descScrollController.dispose();
@@ -533,6 +813,9 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
         descHtml = _desc.text.trim().isEmpty ? null : _desc.text.trim();
       }
     }
+    if (!kIsWeb && descHtml != null && descHtml.isNotEmpty) {
+      descHtml = _injectImageWidthsIntoHtml(descHtml);
+    }
     int? mediaId;
     if (_mediaName.text.trim().isNotEmpty) {
       mediaId = await widget.db.upsertMedia(_mediaName.text.trim(), _mediaType);
@@ -625,275 +908,184 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
                     onPressed: _loading ? null : _save),
               ],
               child: PageContainer(
-                  child: ListView(children: [
-                SectionCard(
-                  title: 'Sumber',
-                  child: Column(children: [
-                    UiInput(
-                        controller: _url,
-                        hint: 'Link artikel',
-                        prefix: Icons.link,
-                        suffix: InkWell(
-                            onTap: _loading ? null : _extract,
-                            borderRadius: BorderRadius.circular(8),
-                            child: const Padding(
-                                padding: EdgeInsets.all(8),
-                                child: Icon(Icons.auto_fix_high)))),
-                    const SizedBox(height: Spacing.md),
-                    UiInput(controller: _title, hint: 'Judul'),
-                    const SizedBox(height: Spacing.sm),
-                    _KindChips(
-                        value: _kind,
-                        onChanged: (v) =>
-                            setState(() => _kind = v ?? 'artikel')),
-                  ]),
-                ),
-                const SizedBox(height: Spacing.lg),
-                SectionCard(
-                  title: 'Media & Tanggal',
-                  child: Column(children: [
-                    Row(children: [
-                      Expanded(
-                          child: UiInput(
-                              controller: _mediaName,
-                              hint: 'Nama Media',
-                              prefix: Icons.apartment)),
-                      const SizedBox(width: Spacing.sm),
-                      Expanded(
-                          child: _MediaTypeChips(
-                              value: _mediaType,
+                child: SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      SectionCard(
+                        title: 'Sumber',
+                        child: Column(children: [
+                          UiInput(
+                              controller: _url,
+                              hint: 'Link artikel',
+                              prefix: Icons.link,
+                              suffix: InkWell(
+                                  onTap: _loading ? null : _extract,
+                                  borderRadius: BorderRadius.circular(8),
+                                  child: const Padding(
+                                      padding: EdgeInsets.all(8),
+                                      child: Icon(Icons.auto_fix_high)))),
+                          const SizedBox(height: Spacing.md),
+                          UiInput(controller: _title, hint: 'Judul'),
+                          const SizedBox(height: Spacing.sm),
+                          _KindChips(
+                              value: _kind,
                               onChanged: (v) =>
-                                  setState(() => _mediaType = v ?? 'online'))),
-                    ]),
-                    const SizedBox(height: Spacing.md),
-                    Row(children: [
-                      Expanded(
-                          child: Text(_date == null
-                              ? 'Tanggal: -'
-                              : 'Tanggal: ${_date!.toIso8601String().substring(0, 10)}')),
-                      const SizedBox(width: Spacing.sm),
-                      UiButton(
-                          label: 'Pilih Tanggal',
-                          icon: Icons.event,
-                          primary: false,
-                          onPressed: () async {
-                            final now = DateTime.now();
-                            final d = await showDatePicker(
-                                context: context,
-                                firstDate: DateTime(1990),
-                                lastDate: DateTime(now.year + 1),
-                                initialDate: now);
-                            if (d != null) setState(() => _date = d);
-                          }),
-                    ]),
-                  ]),
-                ),
-                const SizedBox(height: Spacing.lg),
-                SectionCard(
-                  title: 'Konten',
-                  child: Column(children: [
-                    // Excerpt field hidden per request; still kept in state for storage if needed
-                    // Use rich editor (mobile/desktop); fallback to textarea on Web
-                    Builder(builder: (context) {
-                      if (kIsWeb) {
-                        return UiTextArea(
-                            controller: _desc,
-                            hint: 'Deskripsi',
-                            minLines: 5,
-                            maxLines: 12);
-                      }
-                      return _KeepAlive(
-                        child: Container(
-                          height: _editorViewportHeight,
-                          decoration: BoxDecoration(
-                            color: DS.surface,
-                            border: Border.all(color: DS.border),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              _buildEditorToolbar(),
-                              Divider(
-                                  height: 1, thickness: 1, color: DS.border),
-                              Expanded(
-                                child: Padding(
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 8, vertical: 8),
-                                  child: Scrollbar(
-                                    controller: _descScrollController,
-                                    thumbVisibility: true,
-                                    child: SuperEditor(
+                                  setState(() => _kind = v ?? 'artikel')),
+                        ]),
+                      ),
+                      const SizedBox(height: Spacing.lg),
+                      _buildMediaSection(context),
+                      const SizedBox(height: Spacing.lg),
+                      SectionCard(
+                        title: 'Konten',
+                        child: Column(children: [
+                          // Excerpt field hidden per request; still kept in state for storage if needed
+                          // Use rich editor (mobile/desktop); fallback to textarea on Web
+                          Builder(builder: (context) {
+                            if (kIsWeb) {
+                              return UiTextArea(
+                                  controller: _desc,
+                                  hint: 'Deskripsi',
+                                  minLines: 5,
+                                  maxLines: 12);
+                            }
+                            return _KeepAlive(
+                              child: Container(
+                                height: _editorViewportHeight,
+                                decoration: BoxDecoration(
+                                  color: DS.surface,
+                                  border: Border.all(color: DS.border),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: CustomScrollView(
+                                  controller: _descScrollController,
+                                  slivers: [
+                                    SliverToBoxAdapter(
+                                      child: _buildEditorToolbar(),
+                                    ),
+                                    SliverToBoxAdapter(
+                                      child: Divider(
+                                          height: 1,
+                                          thickness: 1,
+                                          color: DS.border),
+                                    ),
+                                    SuperEditor(
                                       editor: _descEditor,
                                       focusNode: _descEditorFocusNode,
-                                      scrollController: _descScrollController,
                                       documentLayoutKey: _descLayoutKey,
+                                      plugins: const {_DataUriImagePlugin()},
                                       stylesheet: defaultStylesheet.copyWith(
                                         documentPadding:
                                             const EdgeInsets.symmetric(
-                                                vertical: 12, horizontal: 8),
+                                                vertical: 8, horizontal: 8),
                                       ),
-                                      selectionStyles: SelectionStyles(
+                                      selectionStyle: SelectionStyles(
                                         selectionColor: DS.accentLite,
-                                        caretColor: DS.accent,
                                       ),
                                     ),
-                                  ),
+                                    SliverToBoxAdapter(
+                                      child: AnimatedSwitcher(
+                                        duration:
+                                            const Duration(milliseconds: 180),
+                                        child: _buildImageResizeControls(),
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ),
-                            ],
-                          ),
-                        ),
-                      );
-                    }),
-                  ]),
-                ),
-                const SizedBox(height: Spacing.lg),
-                SectionCard(
-                  title: 'Gambar',
-                  child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Container(
-                          width: double.infinity,
-                          decoration: BoxDecoration(
-                            color: DS.surface,
-                            border: Border.all(color: DS.border),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          padding: const EdgeInsets.all(12),
-                          child: Builder(builder: (context) {
-                            if (_pickedImageBytes != null &&
-                                _pickedImageBytes!.isNotEmpty) {
-                              return Image.memory(_pickedImageBytes!,
-                                  height: 160, fit: BoxFit.cover);
-                            } else if ((_imagePath ?? '').isNotEmpty) {
-                              final w = imageFromPath(_imagePath!,
-                                  height: 160, fit: BoxFit.cover);
-                              if (w != null) return w;
-                            }
-                            return Text('Belum ada gambar',
-                                style: TextStyle(color: DS.textDim));
+                            );
                           }),
-                        ),
-                        const SizedBox(height: Spacing.sm),
-                        Row(children: [
-                          UiButton(
-                              label: 'Pilih Gambar',
-                              icon: Icons.image,
-                              primary: false,
-                              onPressed: _pickImage),
-                          const SizedBox(width: Spacing.sm),
-                          UiButton(
-                              label: 'Hapus',
-                              icon: Icons.delete,
-                              primary: false,
-                              onPressed: (_pickedImageBytes != null) ||
-                                      ((_imagePath ?? '').isNotEmpty)
-                                  ? () {
-                                      setState(() {
-                                        _pickedImageBytes = null;
-                                        _pickedImageExt = null;
-                                        _removeImage = true;
-                                      });
-                                    }
-                                  : null),
                         ]),
-                        if (kIsWeb)
-                          Padding(
-                            padding: const EdgeInsets.only(top: 8),
-                            child: Text(
-                                'Catatan: Penyimpanan gambar belum didukung di Web.',
-                                style: Theme.of(context)
-                                    .textTheme
-                                    .bodySmall
-                                    ?.copyWith(color: DS.textDim)),
+                      ),
+                      const SizedBox(height: Spacing.lg),
+                      _buildImageSection(context),
+                      const SizedBox(height: Spacing.lg),
+                      SectionCard(
+                        title: 'Tag',
+                        child: Column(children: [
+                          TagEditor(
+                            label: 'Lokasi',
+                            controller: _locationInput,
+                            tags: _locationTags,
+                            onAdded: (v) {
+                              setState(() => _locationTags.add(v));
+                            },
+                            onRemoved: (v) {
+                              setState(() => _locationTags.remove(v));
+                            },
+                            suggestionFetcher: (text) async {
+                              await widget.db.init();
+                              return widget.db.suggestLocations(text);
+                            },
                           ),
-                      ]),
+                          const SizedBox(height: Spacing.md),
+                          TagEditor(
+                            label: 'Penulis',
+                            controller: _authorInput,
+                            tags: _authorTags,
+                            onAdded: (v) {
+                              setState(() => _authorTags.add(v));
+                            },
+                            onRemoved: (v) {
+                              setState(() => _authorTags.remove(v));
+                            },
+                            suggestionFetcher: (text) async {
+                              await widget.db.init();
+                              return widget.db.suggestAuthors(text);
+                            },
+                          ),
+                          const SizedBox(height: Spacing.md),
+                          TagEditor(
+                            label: 'Tokoh',
+                            controller: _peopleInput,
+                            tags: _peopleTags,
+                            onAdded: (v) {
+                              setState(() => _peopleTags.add(v));
+                            },
+                            onRemoved: (v) {
+                              setState(() => _peopleTags.remove(v));
+                            },
+                            suggestionFetcher: (text) async {
+                              await widget.db.init();
+                              return widget.db.suggestPeople(text);
+                            },
+                          ),
+                          const SizedBox(height: Spacing.md),
+                          TagEditor(
+                            label: 'Organisasi',
+                            controller: _orgsInput,
+                            tags: _orgTags,
+                            onAdded: (v) {
+                              setState(() => _orgTags.add(v));
+                            },
+                            onRemoved: (v) {
+                              setState(() => _orgTags.remove(v));
+                            },
+                            suggestionFetcher: (text) async {
+                              await widget.db.init();
+                              return widget.db.suggestOrganizations(text);
+                            },
+                          ),
+                        ]),
+                      ),
+                      const SizedBox(height: Spacing.lg),
+                      if (_canonical != null)
+                        Text('Canonical URL: $_canonical',
+                            style: Theme.of(context)
+                                .textTheme
+                                .bodySmall
+                                ?.copyWith(color: DS.textDim)),
+                      if (_error != null)
+                        Padding(
+                            padding: const EdgeInsets.only(top: Spacing.sm),
+                            child: Text(_error!,
+                                style: const TextStyle(color: Colors.red))),
+                      const SizedBox(height: Spacing.xxl),
+                    ],
+                  ),
                 ),
-                const SizedBox(height: Spacing.lg),
-                SectionCard(
-                  title: 'Tag',
-                  child: Column(children: [
-                    TagEditor(
-                      label: 'Lokasi',
-                      controller: _locationInput,
-                      tags: _locationTags,
-                      onAdded: (v) {
-                        setState(() => _locationTags.add(v));
-                      },
-                      onRemoved: (v) {
-                        setState(() => _locationTags.remove(v));
-                      },
-                      suggestionFetcher: (text) async {
-                        await widget.db.init();
-                        return widget.db.suggestLocations(text);
-                      },
-                    ),
-                    const SizedBox(height: Spacing.md),
-                    TagEditor(
-                      label: 'Penulis',
-                      controller: _authorInput,
-                      tags: _authorTags,
-                      onAdded: (v) {
-                        setState(() => _authorTags.add(v));
-                      },
-                      onRemoved: (v) {
-                        setState(() => _authorTags.remove(v));
-                      },
-                      suggestionFetcher: (text) async {
-                        await widget.db.init();
-                        return widget.db.suggestAuthors(text);
-                      },
-                    ),
-                    const SizedBox(height: Spacing.md),
-                    TagEditor(
-                      label: 'Tokoh',
-                      controller: _peopleInput,
-                      tags: _peopleTags,
-                      onAdded: (v) {
-                        setState(() => _peopleTags.add(v));
-                      },
-                      onRemoved: (v) {
-                        setState(() => _peopleTags.remove(v));
-                      },
-                      suggestionFetcher: (text) async {
-                        await widget.db.init();
-                        return widget.db.suggestPeople(text);
-                      },
-                    ),
-                    const SizedBox(height: Spacing.md),
-                    TagEditor(
-                      label: 'Organisasi',
-                      controller: _orgsInput,
-                      tags: _orgTags,
-                      onAdded: (v) {
-                        setState(() => _orgTags.add(v));
-                      },
-                      onRemoved: (v) {
-                        setState(() => _orgTags.remove(v));
-                      },
-                      suggestionFetcher: (text) async {
-                        await widget.db.init();
-                        return widget.db.suggestOrganizations(text);
-                      },
-                    ),
-                  ]),
-                ),
-                const SizedBox(height: Spacing.lg),
-                if (_canonical != null)
-                  Text('Canonical URL: $_canonical',
-                      style: Theme.of(context)
-                          .textTheme
-                          .bodySmall
-                          ?.copyWith(color: DS.textDim)),
-                if (_error != null)
-                  Padding(
-                      padding: const EdgeInsets.only(top: Spacing.sm),
-                      child: Text(_error!,
-                          style: const TextStyle(color: Colors.red))),
-                const SizedBox(height: Spacing.xxl),
-              ])),
+              ),
             ),
           ),
           if (_prefillInProgress)
@@ -918,6 +1110,214 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
         ],
       ),
     );
+  }
+
+  Widget _buildMediaSection(BuildContext context) {
+    return SectionCard(
+      title: 'Media & Tanggal',
+      child: LayoutBuilder(builder: (context, constraints) {
+        final isWide = constraints.maxWidth >= 640;
+        final mediaNameField = _buildLabeledField(
+          context,
+          'Nama Media',
+          UiInput(
+            controller: _mediaName,
+            hint: 'Nama media',
+            prefix: Icons.apartment,
+          ),
+        );
+        final dateField = _buildLabeledField(
+          context,
+          'Tanggal Terbit',
+          _buildDateField(context),
+        );
+        final mediaTypeField = _buildLabeledField(
+          context,
+          'Jenis Media',
+          _buildMediaTypeField(context),
+        );
+        if (isWide) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(child: mediaNameField),
+                  const SizedBox(width: Spacing.md),
+                  Expanded(child: dateField),
+                ],
+              ),
+              const SizedBox(height: Spacing.md),
+              mediaTypeField,
+            ],
+          );
+        }
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            mediaNameField,
+            const SizedBox(height: Spacing.md),
+            dateField,
+            const SizedBox(height: Spacing.md),
+            mediaTypeField,
+          ],
+        );
+      }),
+    );
+  }
+
+  Widget _buildImageSection(BuildContext context) {
+    return SectionCard(
+      title: 'Gambar',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: double.infinity,
+            decoration: BoxDecoration(
+              color: DS.surface,
+              border: Border.all(color: DS.border),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            padding: const EdgeInsets.all(12),
+            child: Builder(builder: (context) {
+              if (_pickedImageBytes != null && _pickedImageBytes!.isNotEmpty) {
+                return Image.memory(_pickedImageBytes!,
+                    height: 160, fit: BoxFit.cover);
+              } else if ((_imagePath ?? '').isNotEmpty) {
+                final w =
+                    imageFromPath(_imagePath!, height: 160, fit: BoxFit.cover);
+                if (w != null) return w;
+              }
+              return Text('Belum ada gambar',
+                  style: TextStyle(color: DS.textDim));
+            }),
+          ),
+          const SizedBox(height: Spacing.sm),
+          Row(children: [
+            UiButton(
+                label: 'Pilih Gambar',
+                icon: Icons.image,
+                primary: false,
+                onPressed: _pickImage),
+            const SizedBox(width: Spacing.sm),
+            UiButton(
+                label: 'Hapus',
+                icon: Icons.delete,
+                primary: false,
+                onPressed: (_pickedImageBytes != null) ||
+                        ((_imagePath ?? '').isNotEmpty)
+                    ? () {
+                        setState(() {
+                          _pickedImageBytes = null;
+                          _pickedImageExt = null;
+                          _removeImage = true;
+                        });
+                      }
+                    : null),
+          ]),
+          if (kIsWeb)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text('Catatan: Penyimpanan gambar belum didukung di Web.',
+                  style: Theme.of(context)
+                      .textTheme
+                      .bodySmall
+                      ?.copyWith(color: DS.textDim)),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMediaTypeField(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: DS.surface,
+        borderRadius: DS.br,
+        border: Border.all(color: DS.border),
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      child: _MediaTypeChips(
+        value: _mediaType,
+        onChanged: (v) => setState(() => _mediaType = v ?? 'online'),
+      ),
+    );
+  }
+
+  Widget _buildDateField(BuildContext context) {
+    final label =
+        _date == null ? 'Pilih tanggal terbit' : _formatDisplayDate(_date!);
+    final textStyle = Theme.of(context).textTheme.bodyMedium;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () => _pickPublishedDate(context),
+      child: Container(
+        decoration: BoxDecoration(
+          color: DS.surface,
+          borderRadius: DS.br,
+          border: Border.all(color: DS.border),
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        child: Row(
+          children: [
+            Icon(Icons.event, color: DS.textDim),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                label,
+                style: textStyle?.copyWith(
+                  color: _date == null ? DS.textDim : DS.text,
+                ),
+              ),
+            ),
+            Icon(Icons.keyboard_arrow_down, color: DS.textDim),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLabeledField(
+    BuildContext context,
+    String label,
+    Widget child,
+  ) {
+    final style =
+        Theme.of(context).textTheme.bodySmall?.copyWith(color: DS.textDim);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: style),
+        const SizedBox(height: 6),
+        child,
+      ],
+    );
+  }
+
+  String _formatDisplayDate(DateTime date) {
+    String twoDigits(int value) => value.toString().padLeft(2, '0');
+    return '${date.year}-${twoDigits(date.month)}-${twoDigits(date.day)}';
+  }
+
+  Future<void> _pickPublishedDate(BuildContext context) async {
+    FocusScope.of(context).unfocus();
+    final now = DateTime.now();
+    final initialDate = _date ?? now;
+    final earliest = DateTime(1990);
+    final adjustedInitial =
+        initialDate.isBefore(earliest) ? earliest : initialDate;
+    final picked = await showDatePicker(
+      context: context,
+      firstDate: earliest,
+      lastDate: DateTime(now.year + 1, 12, 31),
+      initialDate: adjustedInitial,
+    );
+    if (picked != null) {
+      setState(() {
+        _date = picked;
+      });
+    }
   }
 }
 
@@ -1052,5 +1452,110 @@ class _ToolbarIconButton extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+class _DataUriImagePlugin extends SuperEditorPlugin {
+  const _DataUriImagePlugin();
+
+  @override
+  List<ComponentBuilder> get componentBuilders => const [
+        _DataUriImageComponentBuilder(),
+      ];
+}
+
+class _DataUriImageComponentBuilder extends ImageComponentBuilder {
+  const _DataUriImageComponentBuilder();
+
+  @override
+  SingleColumnLayoutComponentViewModel? createViewModel(
+      Document document, DocumentNode node) {
+    final viewModel = super.createViewModel(document, node);
+    if (viewModel is ImageComponentViewModel && node is ImageNode) {
+      final widthMeta = node.getMetadataValue('width');
+      if (widthMeta is num) {
+        final width = widthMeta.toDouble();
+        viewModel.maxWidth = width;
+      }
+    }
+    return viewModel;
+  }
+
+  @override
+  Widget? createComponent(
+    SingleColumnDocumentComponentContext componentContext,
+    SingleColumnLayoutComponentViewModel componentViewModel,
+  ) {
+    if (componentViewModel is! ImageComponentViewModel) {
+      return super.createComponent(componentContext, componentViewModel);
+    }
+
+    final imageUrl = componentViewModel.imageUrl;
+    if (!imageUrl.startsWith('data:')) {
+      return super.createComponent(componentContext, componentViewModel);
+    }
+
+    final imageViewModel = componentViewModel as ImageComponentViewModel;
+    final explicitWidth = imageViewModel.expectedSize?.width?.toDouble() ??
+        imageViewModel.maxWidth;
+
+    return ImageComponent(
+      componentKey: componentContext.componentKey,
+      imageUrl: imageUrl,
+      expectedSize: componentViewModel.expectedSize,
+      selection: componentViewModel.selection?.nodeSelection
+          as UpstreamDownstreamNodeSelection?,
+      selectionColor: componentViewModel.selectionColor,
+      opacity: componentViewModel.opacity,
+      imageBuilder: (context, _) {
+        final bytes = _decodeDataUriBytes(imageUrl);
+        if (bytes == null) {
+          debugPrint('Failed to decode data URI image');
+          return const SizedBox.shrink();
+        }
+        final imageWidget = Image.memory(
+          bytes,
+          fit: BoxFit.contain,
+        );
+        if (explicitWidth == null) {
+          return imageWidget;
+        }
+        return Align(
+          alignment: Alignment.centerLeft,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: explicitWidth!,
+            ),
+            child: imageWidget,
+          ),
+        );
+      },
+    );
+  }
+
+  Uint8List? _decodeDataUriBytes(String uri) {
+    final trimmed = uri.trim();
+    try {
+      return UriData.parse(trimmed).contentAsBytes();
+    } catch (_) {
+      final normalized = trimmed.replaceAll(RegExp(r'\s+'), '');
+      if (normalized != trimmed) {
+        try {
+          return UriData.parse(normalized).contentAsBytes();
+        } catch (_) {}
+      }
+      final match = RegExp(r'^data:([^;]+);base64,(.*)$',
+              caseSensitive: false, dotAll: true)
+          .firstMatch(normalized);
+      if (match != null) {
+        final payload = match.group(2);
+        if (payload != null) {
+          try {
+            return base64Decode(payload);
+          } catch (_) {}
+        }
+      }
+    }
+    return null;
   }
 }
