@@ -299,8 +299,9 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
         ? trimmed
         : '<p>${htmlEscape.convert(trimmed)}</p>';
     try {
-      // Use HtmlToDelta as fallback, but create custom Delta for better paragraph handling
-      final delta = _customHtmlToDelta(sanitized);
+      // Use the standard HtmlToDelta converter to preserve all formatting
+      final converter = HtmlToDelta();
+      final delta = converter.convert(sanitized);
       final document = Document.fromDelta(delta);
       final widths = _extractImageWidths(trimmed);
       setState(() {
@@ -310,92 +311,6 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
       debugPrint('Gagal memuat HTML ke editor: $err');
       setState(_resetQuillDocument);
     }
-  }
-
-  Delta _customHtmlToDelta(String html) {
-    var delta = Delta();
-
-    // Simple regex-based parser for paragraph tags
-    // This ensures each <p> creates a proper line in Quill
-    final paragraphRegex = RegExp(r'<p[^>]*>(.*?)</p>', dotAll: true);
-    final matches = paragraphRegex.allMatches(html);
-
-    if (matches.isEmpty) {
-      // Fallback to standard converter
-      final converter = HtmlToDelta();
-      return converter.convert(html);
-    }
-
-    for (final match in matches) {
-      final content = match.group(1) ?? '';
-
-      // Handle empty paragraphs
-      if (content.trim().isEmpty || content == '&nbsp;' || content == '<br>' || content == '<br/>') {
-        delta.insert('\n');
-        continue;
-      }
-
-      // Check if paragraph contains an image
-      if (content.contains('<img')) {
-        // Extract src from img tag
-        final srcMatch = RegExp(r'src="([^"]+)"', caseSensitive: false).firstMatch(content) ??
-            RegExp(r"src='([^']+)'", caseSensitive: false).firstMatch(content);
-
-        if (srcMatch != null) {
-          final src = srcMatch.group(1) ?? '';
-
-          // Extract width if available
-          final widthMatch = RegExp(r'width="([0-9]+)"', caseSensitive: false).firstMatch(content) ??
-              RegExp(r"width='([0-9]+)'", caseSensitive: false).firstMatch(content);
-          final widthStr = widthMatch?.group(1);
-
-          // Insert image as BlockEmbed
-          delta.insert({
-            'image': src,
-          });
-          delta.insert('\n');
-
-          // Store width if available
-          if (widthStr != null) {
-            final width = double.tryParse(widthStr);
-            if (width != null) {
-              _imageWidths[src] = width;
-            }
-          }
-          continue;
-        }
-      }
-
-      // Parse inline content (basic support for common tags)
-      var text = content;
-
-      // Remove HTML tags but preserve text (simple approach)
-      text = _stripHtmlTags(text);
-
-      // Decode HTML entities
-      text = _decodeHtmlEntities(text);
-
-      // Insert the text followed by newline
-      delta.insert(text);
-      delta.insert('\n');
-    }
-
-    return delta;
-  }
-
-  String _stripHtmlTags(String html) {
-    // Simple tag stripper - preserves text content
-    return html.replaceAll(RegExp(r'<[^>]*>'), '');
-  }
-
-  String _decodeHtmlEntities(String text) {
-    return text
-        .replaceAll('&nbsp;', ' ')
-        .replaceAll('&amp;', '&')
-        .replaceAll('&lt;', '<')
-        .replaceAll('&gt;', '>')
-        .replaceAll('&quot;', '"')
-        .replaceAll('&#39;', "'");
   }
 
   void _applyDocument(Document document, {Map<String, double>? widths}) {
