@@ -1,30 +1,157 @@
-import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart' show defaultTargetPlatform, kIsWeb;
-import 'dart:io';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
+
 import 'package:file_picker/file_picker.dart';
-import '../../util/platform_io.dart';
+import 'package:flutter/foundation.dart' show kIsWeb, listEquals, mapEquals;
+import 'package:flutter/material.dart';
+import 'package:flutter_quill/flutter_quill.dart';
+import 'package:flutter_quill_delta_from_html/flutter_quill_delta_from_html.dart';
+import 'package:dart_quill_delta/dart_quill_delta.dart' show Delta;
+
 import '../../data/local/db.dart';
 import '../../services/metadata_extractor.dart';
+import '../../ui/design.dart';
 import '../../ui/theme.dart';
+import '../../util/platform_io.dart';
 import '../../widgets/page_container.dart';
 import '../../widgets/section_card.dart';
 import '../../widgets/tag_editor.dart';
-import '../../ui/design.dart';
-import '../../widgets/ui_input.dart';
 import '../../widgets/ui_button.dart';
-import '../../widgets/ui_textarea.dart';
+import '../../widgets/ui_input.dart';
 import '../../widgets/ui_scaffold.dart';
-import 'package:super_editor/super_editor.dart';
-import 'package:super_editor_markdown/super_editor_markdown.dart';
-import 'package:html2md/html2md.dart' as html2md;
-import 'package:markdown/markdown.dart' as md;
+import '../../widgets/ui_toast.dart';
+
+class _ResizableImage extends StatefulWidget {
+  final String imageUrl;
+  final double width;
+
+  const _ResizableImage({
+    super.key,
+    required this.imageUrl,
+    required this.width,
+  });
+
+  @override
+  State<_ResizableImage> createState() => _ResizableImageState();
+}
+
+class _ResizableImageState extends State<_ResizableImage> {
+  Uint8List? _cachedBytes;
+  String? _cachedUrl;
+
+  Uint8List? _getImageBytes() {
+    if (widget.imageUrl.startsWith('data:image')) {
+      if (_cachedUrl == widget.imageUrl && _cachedBytes != null) {
+        return _cachedBytes;
+      }
+      try {
+        final base64String = widget.imageUrl.split(',')[1];
+        final bytes = base64Decode(base64String);
+        _cachedBytes = bytes;
+        _cachedUrl = widget.imageUrl;
+        return bytes;
+      } catch (e) {
+        return null;
+      }
+    }
+    return null;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bytes = _getImageBytes();
+
+    if (bytes != null) {
+      return Align(
+        alignment: Alignment.centerLeft,
+        child: SizedBox(
+          width: widget.width,
+          child: Image.memory(
+            bytes,
+            fit: BoxFit.contain,
+            gaplessPlayback: true,
+            errorBuilder: (context, error, stackTrace) {
+              return const Icon(Icons.broken_image);
+            },
+          ),
+        ),
+      );
+    }
+
+    if (widget.imageUrl.startsWith('http')) {
+      return Align(
+        alignment: Alignment.centerLeft,
+        child: SizedBox(
+          width: widget.width,
+          child: Image.network(
+            widget.imageUrl,
+            fit: BoxFit.contain,
+            gaplessPlayback: true,
+            errorBuilder: (context, error, stackTrace) {
+              return const Icon(Icons.broken_image);
+            },
+          ),
+        ),
+      );
+    }
+
+    return const Icon(Icons.broken_image);
+  }
+}
+
+class ImageEmbedBuilder extends EmbedBuilder {
+  final ValueNotifier<Map<String, double>> imageWidthsNotifier;
+  final double defaultWidth;
+
+  ImageEmbedBuilder({
+    required this.imageWidthsNotifier,
+    this.defaultWidth = 320,
+  });
+
+  @override
+  String get key => 'image';
+
+  @override
+  Widget build(
+    BuildContext context,
+    EmbedContext embedContext,
+  ) {
+    final embedValue = embedContext.node.value;
+    String imageUrl;
+
+    // Extract image URL from various possible formats
+    final data = embedValue.data;
+    if (data is String) {
+      imageUrl = data;
+    } else if (data is Map && data.containsKey('source')) {
+      imageUrl = data['source'] as String;
+    } else if (data is Map && data.containsKey('image')) {
+      imageUrl = data['image'] as String;
+    } else {
+      return const Icon(Icons.broken_image);
+    }
+
+    return ValueListenableBuilder<Map<String, double>>(
+      valueListenable: imageWidthsNotifier,
+      builder: (context, imageWidths, child) {
+        final width = imageWidths[imageUrl] ?? defaultWidth;
+
+        return _ResizableImage(
+          key: ValueKey('img-${imageUrl.hashCode}-$width'),
+          imageUrl: imageUrl,
+          width: width,
+        );
+      },
+    );
+  }
+}
 
 class ArticleFormPage extends StatefulWidget {
   final LocalDatabase db;
   final ArticleModel? article; // when set, edit mode
   const ArticleFormPage({super.key, required this.db, this.article});
+
   @override
   State<ArticleFormPage> createState() => _ArticleFormPageState();
 }
@@ -32,7 +159,6 @@ class ArticleFormPage extends StatefulWidget {
 class _ArticleFormPageState extends State<ArticleFormPage> {
   final _url = TextEditingController();
   final _title = TextEditingController();
-  final _desc = TextEditingController();
   final _excerpt = TextEditingController();
   final _mediaName = TextEditingController();
   String _mediaType = 'online';
@@ -41,467 +167,614 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
   final _peopleInput = TextEditingController();
   final _orgsInput = TextEditingController();
   final _locationInput = TextEditingController();
+  final _tagsInput = TextEditingController();
   final List<String> _authorTags = [];
   final List<String> _peopleTags = [];
   final List<String> _orgTags = [];
   final List<String> _locationTags = [];
+  final List<String> _tags = [];
   DateTime? _date;
   bool _loading = false;
   String? _canonical;
   String? _error;
-  // image state
+  String? _titleError;
+  String? _mediaNameError;
+
   Uint8List? _pickedImageBytes;
   String? _pickedImageExt;
-  String? _imagePath; // existing image path (when editing)
+  String? _imagePath;
   bool _removeImage = false;
-  MutableDocument _descDocument = _emptyDocument();
-  MutableDocumentComposer _descComposer = MutableDocumentComposer();
-  late Editor _descEditor = createDefaultDocumentEditor(
-      document: _descDocument, composer: _descComposer);
-  final FocusNode _descEditorFocusNode = FocusNode();
-  final ScrollController _descScrollController = ScrollController();
-  final GlobalKey _descLayoutKey = GlobalKey();
-  CommonEditorOperations? _commonEditorOps;
-  double _editorViewportHeight = 360;
+
+  late QuillController _quillController;
+  final FocusNode _quillFocusNode = FocusNode();
+  final ScrollController _quillScrollController = ScrollController();
+
+  double _editorViewportHeight = 420;
   static const double _defaultImageWidth = 320;
   static const double _minImageWidth = 120;
   static const double _maxImageWidth = 800;
-  final Map<String, double> _imageWidths = {};
-  String? _selectedImageNodeId;
+  final _imageWidthsNotifier = ValueNotifier<Map<String, double>>({});
+  List<String> _documentImages = [];
+  String? _selectedImageSrc;
   double? _activeImageWidth;
-  late final VoidCallback _selectionListener;
+
   bool _prefillInProgress = false;
+  bool _hasUnsavedChanges = false;
+
+  Map<String, double> get _imageWidths => _imageWidthsNotifier.value;
+
+  void _updateImageWidth(String src, double width) {
+    final updated = Map<String, double>.from(_imageWidths);
+    updated[src] = width;
+    _imageWidthsNotifier.value = updated;
+  }
+
+  void _updateImageWidths(Map<String, double> widths) {
+    _imageWidthsNotifier.value = Map<String, double>.from(widths);
+  }
 
   bool get _isEditing => widget.article != null;
 
-  static MutableDocument _emptyDocument() => MutableDocument(nodes: [
-        ParagraphNode(id: Editor.createNodeId(), text: AttributedText()),
-      ]);
+  @override
+  void initState() {
+    super.initState();
+    _quillController = QuillController.basic();
+    _quillController.addListener(_handleQuillChange);
 
-  DocumentLayout _resolveDocumentLayout() {
-    final layoutState = _descLayoutKey.currentState;
-    if (layoutState == null) {
-      throw StateError('Editor layout is not available yet');
+    // Track changes for unsaved changes warning
+    _url.addListener(_markAsChanged);
+    _title.addListener(_markAsChanged);
+    _title.addListener(_clearTitleError);
+    _excerpt.addListener(_markAsChanged);
+    _mediaName.addListener(_markAsChanged);
+    _mediaName.addListener(_clearMediaNameError);
+    _authorInput.addListener(_markAsChanged);
+    _peopleInput.addListener(_markAsChanged);
+    _orgsInput.addListener(_markAsChanged);
+    _locationInput.addListener(_markAsChanged);
+    _tagsInput.addListener(_markAsChanged);
+
+    if (_isEditing) {
+      _prefillInProgress = true;
+      _loadArticleForEditing();
     }
-    if (layoutState is! DocumentLayout) {
-      throw StateError('Editor layout key is not bound to a DocumentLayout');
+  }
+
+  void _markAsChanged() {
+    if (!_hasUnsavedChanges) {
+      setState(() {
+        _hasUnsavedChanges = true;
+      });
     }
-    return layoutState as DocumentLayout;
   }
 
-  CommonEditorOperations get _editorOps =>
-      _commonEditorOps ??= CommonEditorOperations(
-        document: _descDocument,
-        editor: _descEditor,
-        composer: _descComposer,
-        documentLayoutResolver: _resolveDocumentLayout,
-      );
-
-  void _invalidateEditorOps() {
-    _commonEditorOps = null;
-  }
-
-  void _replaceDocument(MutableDocument document) {
-    _descComposer.selectionNotifier.removeListener(_selectionListener);
-    _descComposer.dispose();
-    _descDocument = document;
-    _descComposer = MutableDocumentComposer();
-    _descComposer.selectionNotifier.addListener(_selectionListener);
-    _imageWidths.clear();
-    _selectedImageNodeId = null;
-    _activeImageWidth = null;
-    _populateImageWidthCache();
-    _descEditor = createDefaultDocumentEditor(
-        document: _descDocument, composer: _descComposer);
-    _invalidateEditorOps();
-  }
-
-  void _resetEditorDocument() {
-    _replaceDocument(_emptyDocument());
-    _desc.text = '';
-  }
-
-  Future<void> _loadHtmlIntoEditor(String html) async {
-    final trimmed = html.trim();
-    if (!mounted) {
-      return;
+  void _clearTitleError() {
+    if (_titleError != null && _title.text.trim().isNotEmpty) {
+      setState(() {
+        _titleError = null;
+      });
     }
+  }
+
+  void _clearMediaNameError() {
+    if (_mediaNameError != null && _mediaName.text.trim().isNotEmpty) {
+      setState(() {
+        _mediaNameError = null;
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _url.dispose();
+    _title.dispose();
+    _excerpt.dispose();
+    _mediaName.dispose();
+    _authorInput.dispose();
+    _peopleInput.dispose();
+    _orgsInput.dispose();
+    _locationInput.dispose();
+    _tagsInput.dispose();
+    _quillController.removeListener(_handleQuillChange);
+    _quillController.dispose();
+    _quillFocusNode.dispose();
+    _quillScrollController.dispose();
+    _imageWidthsNotifier.dispose();
+    super.dispose();
+  }
+
+  void _resetQuillDocument() {
+    _applyDocument(Document());
+  }
+
+  Future<void> _loadHtmlIntoQuill(String rawHtml) async {
+    final trimmed = rawHtml.trim();
+    if (!mounted) return;
     if (trimmed.isEmpty) {
-      setState(_resetEditorDocument);
+      setState(_resetQuillDocument);
       return;
     }
+
+    final sanitized = trimmed.contains('<')
+        ? trimmed
+        : '<p>${htmlEscape.convert(trimmed)}</p>';
     try {
-      final imageWidths = _extractImageWidths(trimmed);
-      final markdown = html2md.convert(trimmed);
-      final doc = deserializeMarkdownToDocument(markdown,
-          syntax: MarkdownSyntax.superEditor);
-      _replaceDocument(doc);
-      if (imageWidths.isNotEmpty) {
-        for (var i = 0; i < _descDocument.nodeCount; i++) {
-          final node = _descDocument.getNodeAt(i);
-          if (node is ImageNode) {
-            final width = imageWidths[node.imageUrl];
+      // Use HtmlToDelta as fallback, but create custom Delta for better paragraph handling
+      final delta = _customHtmlToDelta(sanitized);
+      final document = Document.fromDelta(delta);
+      final widths = _extractImageWidths(trimmed);
+      setState(() {
+        _applyDocument(document, widths: widths);
+      });
+    } catch (err) {
+      debugPrint('Gagal memuat HTML ke editor: $err');
+      setState(_resetQuillDocument);
+    }
+  }
+
+  Delta _customHtmlToDelta(String html) {
+    var delta = Delta();
+
+    // Simple regex-based parser for paragraph tags
+    // This ensures each <p> creates a proper line in Quill
+    final paragraphRegex = RegExp(r'<p[^>]*>(.*?)</p>', dotAll: true);
+    final matches = paragraphRegex.allMatches(html);
+
+    if (matches.isEmpty) {
+      // Fallback to standard converter
+      final converter = HtmlToDelta();
+      return converter.convert(html);
+    }
+
+    for (final match in matches) {
+      final content = match.group(1) ?? '';
+
+      // Handle empty paragraphs
+      if (content.trim().isEmpty || content == '&nbsp;' || content == '<br>' || content == '<br/>') {
+        delta.insert('\n');
+        continue;
+      }
+
+      // Check if paragraph contains an image
+      if (content.contains('<img')) {
+        // Extract src from img tag
+        final srcMatch = RegExp(r'src="([^"]+)"', caseSensitive: false).firstMatch(content) ??
+            RegExp(r"src='([^']+)'", caseSensitive: false).firstMatch(content);
+
+        if (srcMatch != null) {
+          final src = srcMatch.group(1) ?? '';
+
+          // Extract width if available
+          final widthMatch = RegExp(r'width="([0-9]+)"', caseSensitive: false).firstMatch(content) ??
+              RegExp(r"width='([0-9]+)'", caseSensitive: false).firstMatch(content);
+          final widthStr = widthMatch?.group(1);
+
+          // Insert image as BlockEmbed
+          delta.insert({
+            'image': src,
+          });
+          delta.insert('\n');
+
+          // Store width if available
+          if (widthStr != null) {
+            final width = double.tryParse(widthStr);
             if (width != null) {
-              _applyWidthToImageNode(node.id, width);
+              _imageWidths[src] = width;
             }
           }
+          continue;
         }
       }
-      setState(() {});
-      _desc.text = trimmed;
-    } catch (err) {
-      debugPrint('Gagal memuat HTML ke editor: ' + err.toString());
-      setState(_resetEditorDocument);
-      _desc.text = trimmed;
+
+      // Parse inline content (basic support for common tags)
+      var text = content;
+
+      // Remove HTML tags but preserve text (simple approach)
+      text = _stripHtmlTags(text);
+
+      // Decode HTML entities
+      text = _decodeHtmlEntities(text);
+
+      // Insert the text followed by newline
+      delta.insert(text);
+      delta.insert('\n');
     }
+
+    return delta;
   }
 
-  String? _editorHtml() {
-    if (_descDocument.nodeCount == 0) {
-      return null;
+  String _stripHtmlTags(String html) {
+    // Simple tag stripper - preserves text content
+    return html.replaceAll(RegExp(r'<[^>]*>'), '');
+  }
+
+  String _decodeHtmlEntities(String text) {
+    return text
+        .replaceAll('&nbsp;', ' ')
+        .replaceAll('&amp;', '&')
+        .replaceAll('&lt;', '<')
+        .replaceAll('&gt;', '>')
+        .replaceAll('&quot;', '"')
+        .replaceAll('&#39;', "'");
+  }
+
+  void _applyDocument(Document document, {Map<String, double>? widths}) {
+    final images = _collectDocumentImages(document);
+
+    final newWidths = Map<String, double>.from(widths ?? const {});
+    for (final src in images) {
+      newWidths.putIfAbsent(src, () => _defaultImageWidth);
     }
-    if (_descDocument.nodeCount == 1) {
-      final node = _descDocument.getNodeAt(0);
-      if (node is ParagraphNode && node.text.toPlainText().trim().isEmpty) {
-        return null;
-      }
-    }
-    final markdown = serializeDocumentToMarkdown(_descDocument,
-        syntax: MarkdownSyntax.superEditor);
-    if (markdown.trim().isEmpty) {
-      return null;
-    }
-    var html = md.markdownToHtml(
-      markdown,
-      extensionSet: md.ExtensionSet.gitHubWeb,
+
+    _quillController.removeListener(_handleQuillChange);
+    _quillController.dispose();
+    _quillController = QuillController(
+      document: document,
+      selection: const TextSelection.collapsed(offset: 0),
     );
-    html = _injectImageWidthsIntoHtml(html);
-    return html;
-  }
+    _quillController.addListener(_handleQuillChange);
 
-  void _populateImageWidthCache() {
-    for (final node in _descDocument) {
-      if (node is ImageNode) {
-        final width = node.getMetadataValue('width');
-        if (width is num) {
-          _imageWidths[node.id] = width.toDouble();
+    _documentImages = images;
+    _updateImageWidths(newWidths);
+
+    _selectedImageSrc = images.isNotEmpty ? images.first : null;
+    _activeImageWidth =
+        _selectedImageSrc != null ? _imageWidths[_selectedImageSrc!] : null;
+  }
+  List<String> _collectDocumentImages([Document? document]) {
+    final doc = document ?? _quillController.document;
+    final result = <String>[];
+    for (final node in doc.root.children) {
+      if (node is Line) {
+        result.addAll(_imagesFromLine(node));
+      } else if (node is Block) {
+        for (final child in node.children) {
+          if (child is Line) {
+            result.addAll(_imagesFromLine(child));
+          }
         }
-      }
-    }
-  }
-
-  double? _imageWidthFor(String nodeId) {
-    final cached = _imageWidths[nodeId];
-    if (cached != null) {
-      return cached;
-    }
-    final node = _descDocument.getNodeById(nodeId);
-    if (node is ImageNode) {
-      final width = node.getMetadataValue('width');
-      if (width is num) {
-        final value = width.toDouble();
-        _imageWidths[node.id] = value;
-        return value;
-      }
-    }
-    return null;
-  }
-
-  Map<String, double> _extractImageWidths(String html) {
-    final result = <String, double>{};
-    final imgTagRegex = RegExp(r'<img[^>]*>', caseSensitive: false);
-    final srcRegex = RegExp('src=[\'"]([^\'"]+)[\'"]', caseSensitive: false);
-    final widthRegex =
-        RegExp('width=[\'"]([0-9]+(?:\\.[0-9]+)?)[\'"]', caseSensitive: false);
-    for (final match in imgTagRegex.allMatches(html)) {
-      final tag = match.group(0)!;
-      final srcMatch = srcRegex.firstMatch(tag);
-      if (srcMatch == null) {
-        continue;
-      }
-      final widthMatch = widthRegex.firstMatch(tag);
-      if (widthMatch == null) {
-        continue;
-      }
-      final value = double.tryParse(widthMatch.group(1)!);
-      if (value != null) {
-        result[srcMatch.group(1)!] = value;
       }
     }
     return result;
   }
 
-  String _ensureImageWidthAttribute(
-      String html, String imageUrl, double width) {
-    final widthText = width.toStringAsFixed(0);
-    final doubleQuoteKey = 'src="' + imageUrl + '"';
-    final singleQuoteKey = "src='" + imageUrl + "'";
-    var matchIndex = html.indexOf(doubleQuoteKey);
-    if (matchIndex == -1) {
-      matchIndex = html.indexOf(singleQuoteKey);
-    }
-    if (matchIndex == -1) {
-      return html;
-    }
-    final tagStart = html.lastIndexOf('<img', matchIndex);
-    if (tagStart == -1) {
-      return html;
-    }
-    final tagEnd = html.indexOf('>', matchIndex);
-    if (tagEnd == -1) {
-      return html;
-    }
-    final existingTag = html.substring(tagStart, tagEnd + 1);
-    final widthRegex =
-        RegExp('width=[\'"]([0-9]+(?:\\.[0-9]+)?)[\'"]', caseSensitive: false);
-    String newTag;
-    if (widthRegex.hasMatch(existingTag)) {
-      newTag =
-          existingTag.replaceFirst(widthRegex, 'width="' + widthText + '"');
-    } else {
-      final trimmedTag = existingTag.trimRight();
-      final closesSelf = trimmedTag.endsWith('/>');
-      final insertionIndex = closesSelf
-          ? existingTag.lastIndexOf('/>')
-          : existingTag.lastIndexOf('>');
-      if (insertionIndex == -1) {
-        return html;
-      }
-      newTag = existingTag.substring(0, insertionIndex) +
-          ' width="' +
-          widthText +
-          '"' +
-          existingTag.substring(insertionIndex);
-    }
-    return html.replaceFirst(existingTag, newTag);
-  }
-
-  String _injectImageWidthsIntoHtml(String html) {
-    if (_imageWidths.isEmpty) {
-      return html;
-    }
-    var updatedHtml = html;
-    for (final entry in _imageWidths.entries) {
-      final node = _descDocument.getNodeById(entry.key);
-      if (node is ImageNode) {
-        updatedHtml =
-            _ensureImageWidthAttribute(updatedHtml, node.imageUrl, entry.value);
+  Iterable<String> _imagesFromLine(Line line) sync* {
+    for (final leaf in line.children) {
+      if (leaf is Embed) {
+        final value = leaf.value;
+        // Check for both BlockEmbed and custom embed types
+        if (value.type == 'image') {
+          final data = value.data;
+          if (data is String) {
+            yield data;
+          } else if (data is Map && data.containsKey('source')) {
+            yield data['source'] as String;
+          } else if (data is Map && data.containsKey('image')) {
+            yield data['image'] as String;
+          }
+        }
       }
     }
-    return updatedHtml;
   }
 
-  void _applyWidthToImageNode(String nodeId, double width) {
-    final node = _descDocument.getNodeById(nodeId);
-    if (node is! ImageNode) {
-      return;
-    }
-    final clampedWidth = width.clamp(_minImageWidth, _maxImageWidth).toDouble();
-    _imageWidths[nodeId] = clampedWidth;
-    final currentWidth = node.getMetadataValue('width');
-    if (currentWidth is num && currentWidth.toDouble() == clampedWidth) {
-      return;
-    }
-    final updatedNode =
-        node.copyWithAddedMetadata({'width': clampedWidth}) as ImageNode;
-    _descEditor.execute([
-      ReplaceNodeRequest(existingNodeId: nodeId, newNode: updatedNode),
-    ]);
-  }
+  void _handleQuillChange() {
+    if (!mounted) return;
 
-  void _updateActiveImageWidth(double width) {
-    final nodeId = _selectedImageNodeId;
-    if (nodeId == null) {
-      return;
+    // Mark as changed for unsaved warning (but don't trigger setState)
+    if (!_hasUnsavedChanges) {
+      _hasUnsavedChanges = true;
     }
-    final clampedWidth = width.clamp(_minImageWidth, _maxImageWidth).toDouble();
-    _applyWidthToImageNode(nodeId, clampedWidth);
-    setState(() {
-      _activeImageWidth = clampedWidth;
-    });
-  }
 
-  void _clearImageSelection() {
-    if (_selectedImageNodeId == null && _activeImageWidth == null) {
-      return;
-    }
-    setState(() {
-      _selectedImageNodeId = null;
-      _activeImageWidth = null;
-    });
-  }
+    final images = _collectDocumentImages();
 
-  void _handleSelectionChange() {
-    if (!mounted) {
-      return;
-    }
-    final selection = _descComposer.selection;
-    if (selection == null) {
-      if (_selectedImageNodeId != null) {
-        _clearImageSelection();
+    // Only update if images actually changed (not just text edits)
+    if (!listEquals(images, _documentImages)) {
+      final updatedWidths = Map<String, double>.from(_imageWidths);
+
+      for (final src in images) {
+        updatedWidths.putIfAbsent(src, () => _defaultImageWidth);
       }
-      return;
-    }
-    final nodeId = selection.extent.nodeId;
-    final node = _descDocument.getNodeById(nodeId);
-    if (node is ImageNode) {
-      final width = _imageWidthFor(node.id) ?? _defaultImageWidth;
-      if (_imageWidths[node.id] != width) {
-        _applyWidthToImageNode(node.id, width);
+      final toRemove =
+          updatedWidths.keys.where((src) => !images.contains(src)).toList();
+      for (final src in toRemove) {
+        updatedWidths.remove(src);
       }
-      if (_selectedImageNodeId != node.id || _activeImageWidth != width) {
-        setState(() {
-          _selectedImageNodeId = node.id;
-          _activeImageWidth = width;
-        });
+
+      String? selectionImage;
+      final selection = _quillController.selection;
+      if (selection.isCollapsed) {
+        try {
+          final embed = getEmbedNode(_quillController, selection.start).value.value;
+          if (embed is BlockEmbed && embed.type == BlockEmbed.imageType) {
+            selectionImage = embed.data as String;
+          }
+        } catch (_) {
+          // ignore when cursor is not on an embed
+        }
       }
-      return;
-    }
-    if (_selectedImageNodeId != null) {
-      _clearImageSelection();
+
+      var selected = selectionImage ?? _selectedImageSrc;
+      if (selected != null && !images.contains(selected)) {
+        selected = images.isNotEmpty ? images.first : null;
+      }
+      final active = selected != null ? updatedWidths[selected] : null;
+
+      setState(() {
+        _documentImages = images;
+        _updateImageWidths(updatedWidths);
+        _selectedImageSrc = selected;
+        _activeImageWidth = active;
+      });
     }
   }
 
-  Widget _buildImageResizeControls() {
-    if (_selectedImageNodeId == null || _activeImageWidth == null) {
-      return const SizedBox.shrink(key: ValueKey('image-resize-hidden'));
-    }
-    return Builder(builder: (context) {
-      final width =
-          _activeImageWidth!.clamp(_minImageWidth, _maxImageWidth).toDouble();
-      final labelStyle =
-          Theme.of(context).textTheme.bodySmall?.copyWith(color: DS.textDim);
-      return Column(
-        key: const ValueKey('image-resize-visible'),
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Divider(height: 1, thickness: 1, color: DS.border),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-            child: Row(
-              children: [
-                Text('Lebar gambar', style: labelStyle),
-                const Spacer(),
-                Text('${width.toInt()} px',
-                    style: Theme.of(context)
-                        .textTheme
-                        .bodySmall
-                        ?.copyWith(color: DS.text)),
-              ],
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4),
-            child: Slider(
-              min: _minImageWidth,
-              max: _maxImageWidth,
-              value: width,
-              onChanged: _updateActiveImageWidth,
-            ),
-          ),
-        ],
-      );
-    });
+  bool _documentIsEffectivelyEmpty(Document document) {
+    return document.toPlainText().trim().isEmpty;
   }
 
-  void _toggleInlineAttribution(Attribution attribution) {
-    final selection = _descComposer.selection;
-    if (selection == null || selection.isCollapsed) {
-      _editorOps.toggleComposerAttributions({attribution});
-    } else {
-      _editorOps.toggleAttributionsOnSelection({attribution});
+  String _documentToHtml(Document document) {
+    final buffer = StringBuffer();
+    for (final node in document.root.children) {
+      if (node is Block) {
+        buffer.write(_blockToHtml(node));
+      } else if (node is Line) {
+        buffer.write(_lineToHtml(node));
+      }
     }
-    setState(() {});
+    return buffer.toString();
   }
 
-  void _toggleHeading(Attribution blockType) {
-    final selection = _descComposer.selection;
-    if (selection == null || selection.base.nodeId != selection.extent.nodeId) {
-      return;
+  String _blockToHtml(Block block) {
+    final attrs = block.style.attributes;
+    if (attrs.containsKey(Attribute.list.key)) {
+      final type = attrs[Attribute.list.key]?.value?.toString();
+      final tag = type == 'ordered' ? 'ol' : 'ul';
+      final buffer = StringBuffer('<$tag>');
+      for (final child in block.children) {
+        if (child is! Line) continue;
+        final content = _lineInlineHtml(child);
+        buffer.write('<li>${content.isEmpty ? '<br>' : content}</li>');
+      }
+      buffer.write('</$tag>');
+      return buffer.toString();
     }
-    final node = _descDocument.getNodeById(selection.extent.nodeId);
-    if (node is! ParagraphNode) {
-      return;
+    if (attrs.containsKey(Attribute.blockQuote.key)) {
+      final content = block.children
+          .whereType<Line>()
+          .map(_lineInlineHtml)
+          .join('<br/>');
+      final body = content.isEmpty ? '&nbsp;' : content;
+      return '<blockquote>$body</blockquote>';
     }
-    final current = node.metadata[NodeMetadata.blockType] as Attribution?;
-    final nextType = current == blockType ? paragraphAttribution : blockType;
-    _descEditor.execute([
-      ChangeParagraphBlockTypeRequest(nodeId: node.id, blockType: nextType),
-    ]);
-    setState(() {});
+    if (attrs.containsKey(Attribute.codeBlock.key)) {
+      final code = block.children.whereType<Line>().map((line) {
+        final plain = line.toPlainText().replaceAll('\n', '');
+        return htmlEscape.convert(plain);
+      }).join('\n');
+      return '<pre><code>$code</code></pre>';
+    }
+    final buffer = StringBuffer();
+    for (final child in block.children) {
+      if (child is Line) {
+        buffer.write(_lineToHtml(child));
+      }
+    }
+    return buffer.toString();
   }
 
-  void _toggleUnorderedList() {
-    final selection = _descComposer.selection;
-    if (selection == null || selection.base.nodeId != selection.extent.nodeId) {
-      return;
+  String _lineToHtml(Line line) {
+    final inline = _lineInlineHtml(line);
+    final attributes = <String, String>{};
+
+    final parent = line.parent;
+    if (parent is Block) {
+      final blockAttrs = parent.style.attributes;
+      final align = blockAttrs[Attribute.align.key]?.value;
+      if (align != null) {
+        attributes['text-align'] = align.toString();
+      }
+      final indent = blockAttrs[Attribute.indent.key]?.value;
+      if (indent != null) {
+        final value = int.tryParse(indent.toString()) ?? 0;
+        if (value > 0) {
+          attributes['margin-left'] = '${value * 24}px';
+        }
+      }
     }
-    final node = _descDocument.getNodeById(selection.extent.nodeId);
-    if (node is ListItemNode) {
-      _editorOps.convertToParagraph();
-    } else if (node is TextNode) {
-      _editorOps.convertToListItem(ListItemType.unordered, node.text);
+
+    final lineAttrs = line.style.attributes;
+    final align = lineAttrs[Attribute.align.key]?.value;
+    if (align != null) {
+      attributes['text-align'] = align.toString();
     }
-    setState(() {});
+    final indentAttr = lineAttrs[Attribute.indent.key]?.value;
+    if (indentAttr != null) {
+      final value = int.tryParse(indentAttr.toString()) ?? 0;
+      if (value > 0) {
+        attributes['margin-left'] = '${value * 24}px';
+      }
+    }
+
+    final styleAttr = attributes.isEmpty
+        ? ''
+        : ' style="${attributes.entries.map((entry) => '${entry.key}: ${entry.value}').join('; ')}"';
+
+    if (lineAttrs.containsKey(Attribute.header.key)) {
+      final levelValue = lineAttrs[Attribute.header.key]?.value;
+      var level = 1;
+      if (levelValue is num) {
+        level = levelValue.toInt().clamp(1, 6);
+      }
+      final body = inline.isEmpty ? '&nbsp;' : inline;
+      return '<h$level$styleAttr>$body</h$level>';
+    }
+
+    final body = inline.isEmpty ? '&nbsp;' : inline;
+    return '<p$styleAttr>$body</p>';
   }
 
-  void _resizeEditorViewport(bool increase) {
-    setState(() {
-      const minHeight = 320.0;
-      const maxHeight = 960.0;
-      final delta = increase ? 120.0 : -120.0;
-      _editorViewportHeight =
-          (_editorViewportHeight + delta).clamp(minHeight, maxHeight);
-    });
+  String _lineInlineHtml(Line line) {
+    final buffer = StringBuffer();
+    for (final leaf in line.children) {
+      if (leaf is QuillText) {
+        buffer.write(_textLeafToHtml(leaf));
+      } else if (leaf is Embed) {
+        buffer.write(_embedToHtml(leaf));
+      }
+    }
+    return buffer.toString();
+  }
+
+  String _textLeafToHtml(QuillText leaf) {
+    final raw = leaf.value as String? ?? '';
+    if (raw.isEmpty) {
+      return '';
+    }
+    String text = htmlEscape.convert(raw);
+    final style = leaf.style.attributes;
+
+    final linkAttr = style[Attribute.link.key];
+    if (linkAttr != null && linkAttr.value != null) {
+      final href = _escapeAttribute(linkAttr.value.toString());
+      text = '<a href="$href">$text</a>';
+    }
+    if (style.containsKey(Attribute.inlineCode.key)) {
+      text = '<code>$text</code>';
+    }
+    if (style.containsKey(Attribute.bold.key)) {
+      text = '<strong>$text</strong>';
+    }
+    if (style.containsKey(Attribute.italic.key)) {
+      text = '<em>$text</em>';
+    }
+    if (style.containsKey(Attribute.underline.key)) {
+      text = '<u>$text</u>';
+    }
+    if (style.containsKey(Attribute.strikeThrough.key)) {
+      text = '<s>$text</s>';
+    }
+
+    final highlightStyles = <String, String>{};
+    final colorAttr = style[Attribute.color.key]?.value;
+    if (colorAttr != null) {
+      highlightStyles['color'] = colorAttr.toString();
+    }
+    final backgroundAttr = style[Attribute.background.key]?.value;
+    if (backgroundAttr != null) {
+      final value = backgroundAttr.toString();
+      const highlightCandidates = {
+        '#fff59d',
+        '#fff9c4',
+        '#a5d6a7',
+      };
+      if (highlightCandidates.contains(value.toLowerCase())) {
+        text =
+            '<mark data-highlight="true" style="background-color: #a5d6a7;">$text</mark>';
+      } else {
+        highlightStyles['background-color'] = value;
+      }
+    }
+    if (highlightStyles.isNotEmpty) {
+      final styleString =
+          highlightStyles.entries.map((e) => '${e.key}: ${e.value}').join('; ');
+      text = '<span style="$styleString">$text</span>';
+    }
+    return text;
+  }
+
+  String _embedToHtml(Embed leaf) {
+    final value = leaf.value;
+    if (value.type == 'image') {
+      String src;
+      final data = value.data;
+      if (data is String) {
+        src = data;
+      } else if (data is Map && data.containsKey('source')) {
+        src = data['source'] as String;
+      } else if (data is Map && data.containsKey('image')) {
+        src = data['image'] as String;
+      } else {
+        return '';
+      }
+
+      final width = _imageWidths[src];
+      final widthAttr =
+          width != null ? ' width="${width.toStringAsFixed(0)}"' : '';
+      return '<img src="${_escapeAttribute(src)}"$widthAttr />';
+    }
+    return '';
+  }
+
+  String _escapeAttribute(String value) {
+    return value
+        .replaceAll('&', '&amp;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#39;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;');
+  }
+
+  Map<String, double> _extractImageWidths(String html) {
+    final result = <String, double>{};
+    final imgTagRegex = RegExp(r'<img[^>]*>', caseSensitive: false);
+    final srcRegex =
+        RegExp("src=['\"]([^'\"]+)['\"]", caseSensitive: false);
+    final widthRegex = RegExp(
+        "width=['\"]([0-9]+(?:\\.[0-9]+)?)['\"]",
+        caseSensitive: false);
+    for (final match in imgTagRegex.allMatches(html)) {
+      final tag = match.group(0);
+      if (tag == null) continue;
+      final srcMatch = srcRegex.firstMatch(tag);
+      final widthMatch = widthRegex.firstMatch(tag);
+      if (srcMatch == null || widthMatch == null) continue;
+      final src = srcMatch.group(1);
+      final widthText = widthMatch.group(1);
+      if (src == null || widthText == null) continue;
+      final width = double.tryParse(widthText);
+      if (width != null) {
+        result[src] = width;
+      }
+    }
+    return result;
   }
 
   Future<void> _insertImageIntoEditor() async {
-    if (kIsWeb) {
-      return;
-    }
-    final selection = _descComposer.selection;
-    if (selection == null) {
-      return;
-    }
     final result = await FilePicker.platform.pickFiles(
+      allowMultiple: false,
       type: FileType.custom,
-      allowedExtensions: const ['png', 'jpg', 'jpeg', 'gif', 'webp'],
+      allowedExtensions: const ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'],
       withData: true,
     );
-    if (result == null || result.files.isEmpty) {
-      return;
-    }
+    if (result == null || result.files.isEmpty) return;
+
     final picked = result.files.first;
     final bytes = picked.bytes ??
         (picked.path != null ? await File(picked.path!).readAsBytes() : null);
-    if (bytes == null) {
-      return;
-    }
+    if (bytes == null || !mounted) return;
+
     final ext = (picked.extension ?? '').toLowerCase();
     final mime = _mimeFromExtension(ext);
-    final dataUri = 'data:' + mime + ';base64,' + base64Encode(bytes);
-    final inserted = _editorOps.insertImage(dataUri);
-    if (!inserted) {
-      return;
-    }
-    final selectionAfterInsert = _descComposer.selection;
-    if (selectionAfterInsert != null) {
-      final nodeBefore =
-          _descDocument.getNodeBeforeById(selectionAfterInsert.extent.nodeId);
-      if (nodeBefore is ImageNode && nodeBefore.imageUrl == dataUri) {
-        final imageNodeWithWidth = nodeBefore.copyWithAddedMetadata({
-          'width': _defaultImageWidth,
-        }) as ImageNode;
-        _descEditor.execute([
-          ReplaceNodeRequest(
-              existingNodeId: nodeBefore.id, newNode: imageNodeWithWidth),
-        ]);
-        _imageWidths[nodeBefore.id] = _defaultImageWidth;
-        _activeImageWidth = _defaultImageWidth;
-        _selectedImageNodeId = nodeBefore.id;
-      }
-    }
-    setState(() {});
+    final dataUri = 'data:$mime;base64,${base64Encode(bytes)}';
+    if (!mounted) return;
+    final selection = _quillController.selection;
+    final index = selection.baseOffset < 0 ? 0 : selection.baseOffset;
+    _quillController.replaceText(
+      index,
+      0,
+      BlockEmbed.image(dataUri),
+      TextSelection.collapsed(offset: index + 1),
+    );
+
+    // Force update image list
+    if (!mounted) return;
+    final images = _collectDocumentImages();
+    setState(() {
+      _documentImages = images;
+      _updateImageWidth(dataUri, _defaultImageWidth);
+      _selectedImageSrc = dataUri;
+      _activeImageWidth = _defaultImageWidth;
+    });
   }
 
   String _mimeFromExtension(String ext) {
@@ -524,102 +797,145 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
     }
   }
 
-  Widget _buildEditorToolbar() {
-    if (kIsWeb) {
-      return const SizedBox.shrink();
-    }
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-      decoration: BoxDecoration(
-        color: DS.surface,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
-      ),
+  void _resizeEditorViewport(bool increase) {
+    const minHeight = 320.0;
+    const maxHeight = 900.0;
+    final delta = increase ? 120.0 : -120.0;
+    setState(() {
+      _editorViewportHeight =
+          (_editorViewportHeight + delta).clamp(minHeight, maxHeight);
+    });
+  }
+
+  Widget _buildEditorHeader(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
       child: Row(
         children: [
           Expanded(
-            child: Wrap(
-              spacing: 4,
-              runSpacing: 4,
-              children: [
-                _ToolbarIconButton(
-                  icon: Icons.format_bold,
-                  tooltip: 'Tebal',
-                  onPressed: () => _toggleInlineAttribution(boldAttribution),
-                ),
-                _ToolbarIconButton(
-                  icon: Icons.format_italic,
-                  tooltip: 'Miring',
-                  onPressed: () => _toggleInlineAttribution(italicsAttribution),
-                ),
-                _ToolbarIconButton(
-                  icon: Icons.format_underline,
-                  tooltip: 'Garis bawah',
-                  onPressed: () =>
-                      _toggleInlineAttribution(underlineAttribution),
-                ),
-                _ToolbarIconButton(
-                  icon: Icons.format_list_bulleted,
-                  tooltip: 'Bullet',
-                  onPressed: _toggleUnorderedList,
-                ),
-                _ToolbarIconButton(
-                  icon: Icons.title,
-                  tooltip: 'Heading',
-                  onPressed: () => _toggleHeading(header2Attribution),
-                ),
-                _ToolbarIconButton(
-                  icon: Icons.image,
-                  tooltip: 'Sisipkan gambar',
-                  onPressed: _insertImageIntoEditor,
-                ),
-              ],
+            child: Text(
+              'Editor Konten',
+              style: Theme.of(context)
+                  .textTheme
+                  .titleMedium
+                  ?.copyWith(fontWeight: FontWeight.w600),
             ),
           ),
-          const SizedBox(width: 8),
-          _ToolbarIconButton(
-            icon: Icons.unfold_less,
-            tooltip: 'Kecilkan tinggi editor',
-            onPressed: () => _resizeEditorViewport(false),
+          Tooltip(
+            message: 'Perkecil tinggi editor',
+            child: IconButton(
+              icon: const Icon(Icons.unfold_less),
+              onPressed: () => _resizeEditorViewport(false),
+            ),
           ),
-          const SizedBox(width: 4),
-          _ToolbarIconButton(
-            icon: Icons.unfold_more,
-            tooltip: 'Perbesar tinggi editor',
-            onPressed: () => _resizeEditorViewport(true),
+          Tooltip(
+            message: 'Perbesar tinggi editor',
+            child: IconButton(
+              icon: const Icon(Icons.unfold_more),
+              onPressed: () => _resizeEditorViewport(true),
+            ),
           ),
         ],
       ),
     );
   }
 
-  @override
-  void initState() {
-    super.initState();
-    _selectionListener = _handleSelectionChange;
-    _descComposer.selectionNotifier.addListener(_selectionListener);
-    _populateImageWidthCache();
-    if (_isEditing) {
-      _prefillInProgress = true;
-      _loadArticleForEditing();
+  Widget _buildImageWidthPanel(BuildContext context) {
+    if (_documentImages.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        child: Text(
+          'Belum ada gambar di konten. Gunakan tombol gambar pada toolbar untuk menambahkan.',
+          style: Theme.of(context)
+              .textTheme
+              .bodySmall
+              ?.copyWith(color: DS.textDim),
+        ),
+      );
     }
-  }
-
-  @override
-  void dispose() {
-    _url.dispose();
-    _title.dispose();
-    _desc.dispose();
-    _excerpt.dispose();
-    _mediaName.dispose();
-    _authorInput.dispose();
-    _peopleInput.dispose();
-    _orgsInput.dispose();
-    _locationInput.dispose();
-    _descComposer.selectionNotifier.removeListener(_selectionListener);
-    _descComposer.dispose();
-    _descEditorFocusNode.dispose();
-    _descScrollController.dispose();
-    super.dispose();
+    final selected = _selectedImageSrc ?? _documentImages.first;
+    final widthValue =
+        (_activeImageWidth ?? _imageWidths[selected] ?? _defaultImageWidth)
+            .clamp(_minImageWidth, _maxImageWidth);
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: DropdownButton<String>(
+                  value: selected,
+                  isExpanded: true,
+                  items: _documentImages
+                      .asMap()
+                      .entries
+                      .map((entry) => DropdownMenuItem<String>(
+                            value: entry.value,
+                            child: Text(
+                              'Gambar ${entry.key + 1}',
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ))
+                      .toList(),
+                  onChanged: (value) {
+                    if (value == null) return;
+                    setState(() {
+                      _selectedImageSrc = value;
+                      _activeImageWidth =
+                          _imageWidths[value] ?? _defaultImageWidth;
+                    });
+                  },
+                ),
+              ),
+              const SizedBox(width: 12),
+              Text(
+                '${widthValue.toStringAsFixed(0)} px',
+                style: Theme.of(context)
+                    .textTheme
+                    .labelMedium
+                    ?.copyWith(color: DS.textDim),
+              ),
+            ],
+          ),
+          Slider(
+            value: widthValue,
+            min: _minImageWidth,
+            max: _maxImageWidth,
+            onChanged: (value) {
+              final target = _selectedImageSrc ?? selected;
+              setState(() {
+                _selectedImageSrc = target;
+                _updateImageWidth(target, value);
+                _activeImageWidth = value;
+              });
+            },
+          ),
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton(
+              onPressed: () {
+                final target = _selectedImageSrc ?? selected;
+                setState(() {
+                  _updateImageWidth(target, _defaultImageWidth);
+                  _selectedImageSrc = target;
+                  _activeImageWidth = _defaultImageWidth;
+                });
+              },
+              child: const Text('Reset ke 320px'),
+            ),
+          ),
+          Text(
+            'Perubahan lebar akan terlihat pada detail artikel setelah disimpan.',
+            style: Theme.of(context)
+                .textTheme
+                .bodySmall
+                ?.copyWith(color: DS.textDim),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _loadArticleForEditing() async {
@@ -635,7 +951,6 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
     Future<String> convertLocalImagesToDataUri(String raw) async {
       String html = raw;
       try {
-        // Use a raw triple-quoted regex so quotes don't need escaping
         final regex = RegExp(r'''<img[^>]*src=["']([^"']+|[^']+)["'][^>]*>''',
             caseSensitive: false);
         final matches = regex.allMatches(html).toList().reversed;
@@ -647,17 +962,17 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
               lowered.startsWith('https://') ||
               lowered.startsWith('data:');
           if (isNetwork) continue;
-          String path = src;
+          String pathStr = src;
           if (lowered.startsWith('file://')) {
-            path = src.replaceFirst(RegExp(r'^file://'), '');
+            pathStr = src.replaceFirst(RegExp(r'^file://'), '');
           }
           try {
-            final f = File(path);
-            if (await f.exists()) {
-              final bytes = await f.readAsBytes();
+            final file = File(pathStr);
+            if (await file.exists()) {
+              final bytes = await file.readAsBytes();
               final b64 = base64Encode(bytes);
               String mime;
-              final p = path.toLowerCase();
+              final p = pathStr.toLowerCase();
               if (p.endsWith('.png')) {
                 mime = 'image/png';
               } else if (p.endsWith('.jpg') || p.endsWith('.jpeg')) {
@@ -677,7 +992,6 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
               html = html.replaceRange(
                   m.start, m.end, m.group(0)!.replaceFirst(src, dataUri));
             } else {
-              // Remove images pointing to non-readable locations to avoid broken icons in editor
               html = html.replaceRange(m.start, m.end, '');
             }
           } catch (_) {}
@@ -689,11 +1003,11 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
     _title.text = a.title;
     _url.text = a.url;
     _canonical = a.canonicalUrl;
-    _desc.text = a.description ?? '';
     _excerpt.text = a.excerpt ?? '';
     _date = a.publishedAt;
     _kind = a.kind ?? 'artikel';
     _imagePath = a.imagePath;
+
     await widget.db.init();
     if (a.mediaId != null) {
       final m = await widget.db.getMediaById(a.mediaId!);
@@ -707,22 +1021,29 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
     final orgs = await widget.db.orgsForArticle(a.id);
     final locs = await widget.db.locationsForArticle(a.id);
     setState(() {
-      _authorTags.addAll(authors);
-      _peopleTags.addAll(people);
-      _orgTags.addAll(orgs);
-      _locationTags.addAll(locs);
+      _authorTags
+        ..clear()
+        ..addAll(authors);
+      _peopleTags
+        ..clear()
+        ..addAll(people);
+      _orgTags
+        ..clear()
+        ..addAll(orgs);
+      _locationTags
+        ..clear()
+        ..addAll(locs);
+      _tags
+        ..clear()
+        ..addAll(a.tags ?? []);
     });
 
     final descText = a.description?.trim() ?? '';
     if (descText.isNotEmpty) {
-      if (kIsWeb) {
-        _desc.text = descText;
-      } else {
-        final processed = await convertLocalImagesToDataUri(descText);
-        await _loadHtmlIntoEditor(processed);
-      }
-    } else if (!kIsWeb) {
-      _resetEditorDocument();
+      final processed = await convertLocalImagesToDataUri(descText);
+      await _loadHtmlIntoQuill(processed);
+    } else {
+      _resetQuillDocument();
     }
   }
 
@@ -737,12 +1058,12 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
         withData: true,
       );
       if (res == null || res.files.isEmpty) return;
-      final f = res.files.single;
+      final file = res.files.single;
       setState(() {
-        _pickedImageBytes = f.bytes;
+        _pickedImageBytes = file.bytes;
         _pickedImageExt =
-            (f.extension ?? '').isNotEmpty ? f.extension!.toLowerCase() : null;
-        _removeImage = false; // since we pick a new one
+            (file.extension ?? '').isNotEmpty ? file.extension!.toLowerCase() : null;
+        _removeImage = false;
       });
     } catch (e) {
       setState(() {
@@ -762,23 +1083,19 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
       final meta = await svc.fetch(_url.text.trim());
       if (meta != null) {
         _canonical = meta.canonicalUrl;
-        if ((_title.text).isEmpty && (meta.title ?? '').isNotEmpty)
+        if ((_title.text).isEmpty && (meta.title ?? '').isNotEmpty) {
           _title.text = meta.title!;
-        if ((_excerpt.text).isEmpty && (meta.excerpt ?? '').isNotEmpty)
+        }
+        if ((_excerpt.text).isEmpty && (meta.excerpt ?? '').isNotEmpty) {
           _excerpt.text = meta.excerpt!;
-        if ((_desc.text).isEmpty && (meta.description ?? '').isNotEmpty)
-          _desc.text = meta.description!;
-        // Also push extracted content into the rich editor
+        }
         final cand = ((meta.description ?? '').trim().isNotEmpty)
             ? meta.description!.trim()
             : (meta.excerpt ?? '').trim();
-        if (!kIsWeb && cand.isNotEmpty) {
-          await _loadHtmlIntoEditor(cand);
-        } else if (kIsWeb && cand.isNotEmpty) {
-          _desc.text = cand;
+        if (cand.isNotEmpty) {
+          await _loadHtmlIntoQuill(cand);
         }
       }
-      // local dedupe by canonical URL
       if (_canonical != null) {
         final existingId =
             await widget.db.findArticleIdByCanonicalUrl(_canonical!);
@@ -790,112 +1107,290 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
     } catch (e) {
       _error = e.toString();
     } finally {
-      if (mounted)
+      if (mounted) {
         setState(() {
           _loading = false;
         });
+      }
     }
   }
 
   Future<void> _save() async {
-    await widget.db.init();
-    // Capture rich content HTML from the editor or fallback
-    String? descHtml;
-    if (kIsWeb) {
-      descHtml = _desc.text.trim().isEmpty ? null : _desc.text.trim();
-    } else {
-      try {
-        descHtml = _editorHtml()?.trim();
-      } catch (_) {
-        descHtml = null;
+    try {
+      setState(() {
+        _loading = true;
+        _error = null;
+        _titleError = null;
+        _mediaNameError = null;
+      });
+
+      // Validasi mandatory fields
+      bool hasError = false;
+
+      if (_title.text.trim().isEmpty) {
+        setState(() {
+          _titleError = 'Judul artikel wajib diisi';
+        });
+        hasError = true;
       }
-      if (descHtml == null || descHtml.isEmpty) {
-        descHtml = _desc.text.trim().isEmpty ? null : _desc.text.trim();
+
+      if (_mediaName.text.trim().isEmpty) {
+        setState(() {
+          _mediaNameError = 'Nama media wajib diisi';
+        });
+        hasError = true;
       }
-    }
-    if (!kIsWeb && descHtml != null && descHtml.isNotEmpty) {
-      descHtml = _injectImageWidthsIntoHtml(descHtml);
-    }
-    int? mediaId;
-    if (_mediaName.text.trim().isNotEmpty) {
-      mediaId = await widget.db.upsertMedia(_mediaName.text.trim(), _mediaType);
-    }
-    final a = ArticleModel(
-      id: _isEditing
-          ? widget.article!.id
-          : 'local-${DateTime.now().millisecondsSinceEpoch}',
-      title: _title.text.trim(),
-      url: _url.text.trim(),
-      canonicalUrl: _canonical?.trim().isEmpty == true ? null : _canonical,
-      mediaId: mediaId,
-      kind: _kind,
-      description: descHtml,
-      excerpt: _excerpt.text.trim().isEmpty ? null : _excerpt.text.trim(),
-      publishedAt: _date,
-      imagePath: _isEditing ? widget.article!.imagePath : null,
-    );
-    // Handle image save/delete
-    if (_pickedImageBytes != null && _pickedImageBytes!.isNotEmpty) {
-      try {
-        final ext = (_pickedImageExt ?? 'jpg').replaceAll('.', '');
-        final savedPath =
-            await saveImageForArticle(a.id, _pickedImageBytes!, ext: ext);
-        if (savedPath.isEmpty && kIsWeb) {
-          _error = 'Penyimpanan gambar belum didukung di Web.';
+
+      if (hasError) {
+        setState(() {
+          _loading = false;
+        });
+        throw 'Mohon lengkapi semua field yang wajib diisi';
+      }
+
+      await widget.db.init();
+      String? descHtml;
+      final document = _quillController.document;
+      if (!_documentIsEffectivelyEmpty(document)) {
+        final html = _documentToHtml(document).trim();
+        if (html.isNotEmpty) {
+          descHtml = html;
         }
-        if (savedPath.isNotEmpty) {
-          a.imagePath = savedPath;
-          _imagePath = savedPath;
+      }
+
+      int? mediaId;
+      if (_mediaName.text.trim().isNotEmpty) {
+        mediaId = await widget.db.upsertMedia(_mediaName.text.trim(), _mediaType);
+      }
+      final article = ArticleModel(
+        id: _isEditing
+            ? widget.article!.id
+            : 'local-${DateTime.now().millisecondsSinceEpoch}',
+        title: _title.text.trim(),
+        url: _url.text.trim(),
+        canonicalUrl: _canonical?.trim().isEmpty == true ? null : _canonical,
+        mediaId: mediaId,
+        kind: _kind,
+        description: descHtml,
+        excerpt: _excerpt.text.trim().isEmpty ? null : _excerpt.text.trim(),
+        publishedAt: _date,
+        imagePath: _isEditing ? widget.article!.imagePath : null,
+        tags: _tags.isEmpty ? null : _tags,
+      );
+
+      if (_pickedImageBytes != null && _pickedImageBytes!.isNotEmpty) {
+        try {
+          final ext = (_pickedImageExt ?? 'jpg').replaceAll('.', '');
+          final savedPath =
+              await saveImageForArticle(article.id, _pickedImageBytes!, ext: ext);
+          if (savedPath.isEmpty && kIsWeb) {
+            throw Exception('Penyimpanan gambar belum didukung di Web.');
+          }
+          if (savedPath.isNotEmpty) {
+            article.imagePath = savedPath;
+            _imagePath = savedPath;
+          }
+        } catch (e) {
+          throw Exception('Gagal menyimpan gambar: $e');
         }
-      } catch (e) {
-        _error = 'Gagal menyimpan gambar: $e';
+      } else if (_removeImage) {
+        final old = _imagePath ?? widget.article?.imagePath;
+        if (old != null && old.isNotEmpty) {
+          await deleteIfExists(old);
+        }
+        article.imagePath = null;
+        _imagePath = null;
       }
-    } else if (_removeImage) {
-      // remove existing image and delete file when applicable
-      final old = _imagePath ?? widget.article?.imagePath;
-      if (old != null && old.isNotEmpty) {
-        await deleteIfExists(old);
+
+      await widget.db.upsertArticle(article);
+
+      final authorIds = <int>[];
+      for (final name in _authorTags.map((e) => e.trim()).where((e) => e.isNotEmpty)) {
+        authorIds.add(await widget.db.upsertAuthorByName(name));
       }
-      a.imagePath = null;
-      _imagePath = null;
-    }
-    await widget.db.upsertArticle(a);
-    // Upsert tags and link
-    final authorIds = <int>[];
-    for (final name
-        in _authorTags.map((e) => e.trim()).where((e) => e.isNotEmpty)) {
-      authorIds.add(await widget.db.upsertAuthorByName(name));
-    }
-    await widget.db.setArticleAuthors(a.id, authorIds);
+      await widget.db.setArticleAuthors(article.id, authorIds);
 
-    final peopleIds = <int>[];
-    for (final name
-        in _peopleTags.map((e) => e.trim()).where((e) => e.isNotEmpty)) {
-      peopleIds.add(await widget.db.upsertPersonByName(name));
-    }
-    await widget.db.setArticlePeople(a.id, peopleIds);
+      final peopleIds = <int>[];
+      for (final name in _peopleTags.map((e) => e.trim()).where((e) => e.isNotEmpty)) {
+        peopleIds.add(await widget.db.upsertPersonByName(name));
+      }
+      await widget.db.setArticlePeople(article.id, peopleIds);
 
-    final orgIds = <int>[];
-    for (final name
-        in _orgTags.map((e) => e.trim()).where((e) => e.isNotEmpty)) {
-      orgIds.add(await widget.db.upsertOrganizationByName(name));
-    }
-    await widget.db.setArticleOrganizations(a.id, orgIds);
+      final orgIds = <int>[];
+      for (final name in _orgTags.map((e) => e.trim()).where((e) => e.isNotEmpty)) {
+        orgIds.add(await widget.db.upsertOrganizationByName(name));
+      }
+      await widget.db.setArticleOrganizations(article.id, orgIds);
 
-    final locIds = <int>[];
-    for (final name
-        in _locationTags.map((e) => e.trim()).where((e) => e.isNotEmpty)) {
-      locIds.add(await widget.db.upsertLocationByName(name));
+      final locIds = <int>[];
+      for (final name in _locationTags.map((e) => e.trim()).where((e) => e.isNotEmpty)) {
+        locIds.add(await widget.db.upsertLocationByName(name));
+      }
+      await widget.db.setArticleLocations(article.id, locIds);
+
+      // Mark as saved
+      _hasUnsavedChanges = false;
+
+      if (mounted) {
+        UiToast.show(
+          context,
+          message: _isEditing
+              ? 'Artikel berhasil diperbarui'
+              : 'Artikel berhasil ditambahkan',
+          type: ToastType.success,
+        );
+
+        // Delay to let toast show
+        await Future.delayed(const Duration(milliseconds: 300));
+        if (mounted) {
+          Navigator.pop(context);
+        }
+      }
+    } catch (e) {
+      setState(() {
+        _loading = false;
+        _error = e.toString();
+      });
+
+      if (mounted) {
+        // Remove "Exception: " prefix from error message
+        String errorMessage = e.toString();
+        if (errorMessage.startsWith('Exception: ')) {
+          errorMessage = errorMessage.substring('Exception: '.length);
+        }
+
+        UiToast.show(
+          context,
+          message: errorMessage,
+          type: ToastType.error,
+          duration: const Duration(seconds: 4),
+        );
+      }
     }
-    await widget.db.setArticleLocations(a.id, locIds);
-    if (mounted) Navigator.pop(context);
   }
 
+  Future<bool> _onWillPop() async {
+    if (!_hasUnsavedChanges) {
+      return true;
+    }
+
+    final shouldPop = await showDialog<bool>(
+      context: context,
+      builder: (context) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 420),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 32),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 76,
+                  height: 76,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF59E0B).withValues(alpha: 0.12),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.warning_amber_outlined,
+                    size: 36,
+                    color: Color(0xFFF59E0B),
+                  ),
+                ),
+                const SizedBox(height: 20),
+                Text(
+                  'Buang Perubahan?',
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.w600,
+                        color: DS.text,
+                      ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'Anda memiliki perubahan yang belum disimpan. Apakah Anda yakin ingin keluar?',
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: DS.textDim,
+                      ),
+                ),
+                const SizedBox(height: 28),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextButton(
+                        onPressed: () => Navigator.of(context).pop(false),
+                        style: TextButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                            side: BorderSide(color: DS.border),
+                          ),
+                        ),
+                        child: const Text('Batal'),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: ElevatedButton(
+                        onPressed: () => Navigator.of(context).pop(true),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFFEF4444),
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                        ),
+                        child: const Text('Buang'),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    return shouldPop ?? false;
+  }
+
+  Future<void> _pickPublishedDate(BuildContext context) async {
+    FocusScope.of(context).unfocus();
+    final now = DateTime.now();
+    final initialDate = _date ?? now;
+    final earliest = DateTime(1990);
+    final adjustedInitial =
+        initialDate.isBefore(earliest) ? earliest : initialDate;
+    final picked = await showDatePicker(
+      context: context,
+      firstDate: earliest,
+      lastDate: DateTime(now.year + 1, 12, 31),
+      initialDate: adjustedInitial,
+    );
+    if (picked != null) {
+      setState(() {
+        _date = picked;
+      });
+    }
+  }
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: DS.bg,
-      body: Stack(
+    return PopScope(
+      canPop: !_hasUnsavedChanges,
+      onPopInvokedWithResult: (didPop, result) async {
+        if (didPop) return;
+        final shouldPop = await _onWillPop();
+        if (shouldPop && context.mounted) {
+          Navigator.of(context).pop();
+        }
+      },
+      child: Scaffold(
+        backgroundColor: DS.bg,
+        body: Stack(
         children: [
           AbsorbPointer(
             absorbing: _prefillInProgress,
@@ -903,184 +1398,42 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
               title: _isEditing ? 'Edit Artikel' : 'Tambah Artikel',
               actions: [
                 UiButton(
-                    label: 'Simpan',
-                    icon: Icons.save,
-                    onPressed: _loading ? null : _save),
+                  label: 'Simpan',
+                  icon: Icons.save,
+                  onPressed: _loading ? null : _save,
+                ),
               ],
               child: PageContainer(
                 child: SingleChildScrollView(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      SectionCard(
-                        title: 'Sumber',
-                        child: Column(children: [
-                          UiInput(
-                              controller: _url,
-                              hint: 'Link artikel',
-                              prefix: Icons.link,
-                              suffix: InkWell(
-                                  onTap: _loading ? null : _extract,
-                                  borderRadius: BorderRadius.circular(8),
-                                  child: const Padding(
-                                      padding: EdgeInsets.all(8),
-                                      child: Icon(Icons.auto_fix_high)))),
-                          const SizedBox(height: Spacing.md),
-                          UiInput(controller: _title, hint: 'Judul'),
-                          const SizedBox(height: Spacing.sm),
-                          _KindChips(
-                              value: _kind,
-                              onChanged: (v) =>
-                                  setState(() => _kind = v ?? 'artikel')),
-                        ]),
-                      ),
+                      _buildSourceSection(),
                       const SizedBox(height: Spacing.lg),
                       _buildMediaSection(context),
                       const SizedBox(height: Spacing.lg),
-                      SectionCard(
-                        title: 'Konten',
-                        child: Column(children: [
-                          // Excerpt field hidden per request; still kept in state for storage if needed
-                          // Use rich editor (mobile/desktop); fallback to textarea on Web
-                          Builder(builder: (context) {
-                            if (kIsWeb) {
-                              return UiTextArea(
-                                  controller: _desc,
-                                  hint: 'Deskripsi',
-                                  minLines: 5,
-                                  maxLines: 12);
-                            }
-                            return _KeepAlive(
-                              child: Container(
-                                height: _editorViewportHeight,
-                                decoration: BoxDecoration(
-                                  color: DS.surface,
-                                  border: Border.all(color: DS.border),
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                child: CustomScrollView(
-                                  controller: _descScrollController,
-                                  slivers: [
-                                    SliverToBoxAdapter(
-                                      child: _buildEditorToolbar(),
-                                    ),
-                                    SliverToBoxAdapter(
-                                      child: Divider(
-                                          height: 1,
-                                          thickness: 1,
-                                          color: DS.border),
-                                    ),
-                                    SuperEditor(
-                                      editor: _descEditor,
-                                      focusNode: _descEditorFocusNode,
-                                      documentLayoutKey: _descLayoutKey,
-                                      plugins: const {_DataUriImagePlugin()},
-                                      stylesheet: defaultStylesheet.copyWith(
-                                        documentPadding:
-                                            const EdgeInsets.symmetric(
-                                                vertical: 8, horizontal: 8),
-                                      ),
-                                      selectionStyle: SelectionStyles(
-                                        selectionColor: DS.accentLite,
-                                      ),
-                                    ),
-                                    SliverToBoxAdapter(
-                                      child: AnimatedSwitcher(
-                                        duration:
-                                            const Duration(milliseconds: 180),
-                                        child: _buildImageResizeControls(),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            );
-                          }),
-                        ]),
-                      ),
+                      _buildContentSection(context),
                       const SizedBox(height: Spacing.lg),
                       _buildImageSection(context),
                       const SizedBox(height: Spacing.lg),
-                      SectionCard(
-                        title: 'Tag',
-                        child: Column(children: [
-                          TagEditor(
-                            label: 'Lokasi',
-                            controller: _locationInput,
-                            tags: _locationTags,
-                            onAdded: (v) {
-                              setState(() => _locationTags.add(v));
-                            },
-                            onRemoved: (v) {
-                              setState(() => _locationTags.remove(v));
-                            },
-                            suggestionFetcher: (text) async {
-                              await widget.db.init();
-                              return widget.db.suggestLocations(text);
-                            },
-                          ),
-                          const SizedBox(height: Spacing.md),
-                          TagEditor(
-                            label: 'Penulis',
-                            controller: _authorInput,
-                            tags: _authorTags,
-                            onAdded: (v) {
-                              setState(() => _authorTags.add(v));
-                            },
-                            onRemoved: (v) {
-                              setState(() => _authorTags.remove(v));
-                            },
-                            suggestionFetcher: (text) async {
-                              await widget.db.init();
-                              return widget.db.suggestAuthors(text);
-                            },
-                          ),
-                          const SizedBox(height: Spacing.md),
-                          TagEditor(
-                            label: 'Tokoh',
-                            controller: _peopleInput,
-                            tags: _peopleTags,
-                            onAdded: (v) {
-                              setState(() => _peopleTags.add(v));
-                            },
-                            onRemoved: (v) {
-                              setState(() => _peopleTags.remove(v));
-                            },
-                            suggestionFetcher: (text) async {
-                              await widget.db.init();
-                              return widget.db.suggestPeople(text);
-                            },
-                          ),
-                          const SizedBox(height: Spacing.md),
-                          TagEditor(
-                            label: 'Organisasi',
-                            controller: _orgsInput,
-                            tags: _orgTags,
-                            onAdded: (v) {
-                              setState(() => _orgTags.add(v));
-                            },
-                            onRemoved: (v) {
-                              setState(() => _orgTags.remove(v));
-                            },
-                            suggestionFetcher: (text) async {
-                              await widget.db.init();
-                              return widget.db.suggestOrganizations(text);
-                            },
-                          ),
-                        ]),
-                      ),
+                      _buildTagSection(context),
                       const SizedBox(height: Spacing.lg),
                       if (_canonical != null)
-                        Text('Canonical URL: $_canonical',
-                            style: Theme.of(context)
-                                .textTheme
-                                .bodySmall
-                                ?.copyWith(color: DS.textDim)),
+                        Text(
+                          'Canonical URL: $_canonical',
+                          style: Theme.of(context)
+                              .textTheme
+                              .bodySmall
+                              ?.copyWith(color: DS.textDim),
+                        ),
                       if (_error != null)
                         Padding(
-                            padding: const EdgeInsets.only(top: Spacing.sm),
-                            child: Text(_error!,
-                                style: const TextStyle(color: Colors.red))),
+                          padding: const EdgeInsets.only(top: Spacing.sm),
+                          child: Text(
+                            _error!,
+                            style: const TextStyle(color: Colors.red),
+                          ),
+                        ),
                       const SizedBox(height: Spacing.xxl),
                     ],
                   ),
@@ -1109,215 +1462,321 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
             ),
         ],
       ),
+      ),
+    );
+  }
+
+  Widget _buildSourceSection() {
+    return SectionCard(
+      title: 'Sumber',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          UiInput(
+            controller: _url,
+            hint: 'Link artikel',
+            prefix: Icons.link,
+            suffix: InkWell(
+              onTap: _loading ? null : _extract,
+              borderRadius: BorderRadius.circular(8),
+              child: const Padding(
+                padding: EdgeInsets.all(8),
+                child: Icon(Icons.auto_fix_high),
+              ),
+            ),
+          ),
+          const SizedBox(height: Spacing.md),
+          UiInput(controller: _title, hint: 'Judul', errorText: _titleError),
+          const SizedBox(height: Spacing.sm),
+          _KindChips(
+            value: _kind,
+            onChanged: (v) => setState(() => _kind = v ?? 'artikel'),
+          ),
+        ],
+      ),
     );
   }
 
   Widget _buildMediaSection(BuildContext context) {
     return SectionCard(
       title: 'Media & Tanggal',
-      child: LayoutBuilder(builder: (context, constraints) {
-        final isWide = constraints.maxWidth >= 640;
-        final mediaNameField = _buildLabeledField(
-          context,
-          'Nama Media',
-          UiInput(
-            controller: _mediaName,
-            hint: 'Nama media',
-            prefix: Icons.apartment,
-          ),
-        );
-        final dateField = _buildLabeledField(
-          context,
-          'Tanggal Terbit',
-          _buildDateField(context),
-        );
-        final mediaTypeField = _buildLabeledField(
-          context,
-          'Jenis Media',
-          _buildMediaTypeField(context),
-        );
-        if (isWide) {
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Expanded(child: mediaNameField),
-                  const SizedBox(width: Spacing.md),
-                  Expanded(child: dateField),
-                ],
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final isWide = constraints.maxWidth >= 640;
+          final children = [
+            _buildLabeledField(
+              context,
+              'Nama Media',
+              UiInput(
+                controller: _mediaName,
+                hint: 'Nama media',
+                prefix: Icons.apartment,
+                errorText: _mediaNameError,
               ),
-              const SizedBox(height: Spacing.md),
-              mediaTypeField,
-            ],
-          );
-        }
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            mediaNameField,
+            ),
             const SizedBox(height: Spacing.md),
-            dateField,
+            _buildLabeledField(
+              context,
+              'Jenis Media',
+              _MediaTypeChips(
+                value: _mediaType,
+                onChanged: (value) => setState(() => _mediaType = value ?? 'online'),
+              ),
+            ),
             const SizedBox(height: Spacing.md),
-            mediaTypeField,
-          ],
-        );
-      }),
+            _buildLabeledField(
+              context,
+              'Tanggal Publikasi',
+              InkWell(
+                onTap: () => _pickPublishedDate(context),
+                borderRadius: BorderRadius.circular(12),
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: DS.surface,
+                    borderRadius: DS.br,
+                    border: Border.all(color: DS.border),
+                  ),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.calendar_today, size: 18),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          _date == null
+                              ? 'Pilih tanggal'
+                              : '${_date!.day.toString().padLeft(2, '0')}/${_date!.month.toString().padLeft(2, '0')}/${_date!.year}',
+                        ),
+                      ),
+                      if (_date != null)
+                        InkWell(
+                          onTap: () => setState(() => _date = null),
+                          borderRadius: BorderRadius.circular(10),
+                          child: const Padding(
+                            padding: EdgeInsets.all(4),
+                            child: Icon(Icons.close, size: 18),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ];
+
+          if (isWide) {
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(child: Column(children: children.sublist(0, 2))),
+                const SizedBox(width: Spacing.lg),
+                Expanded(child: Column(children: children.sublist(2))),
+              ],
+            );
+          }
+
+          return Column(children: children);
+        },
+      ),
+    );
+  }
+
+  Widget _buildContentSection(BuildContext context) {
+    return SectionCard(
+      title: 'Konten',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Container(
+            decoration: BoxDecoration(
+              color: DS.surface,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: DS.border),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _buildEditorHeader(context),
+                Divider(height: 1, thickness: 1, color: DS.border),
+                _buildCompactToolbar(context),
+                Divider(height: 1, thickness: 1, color: DS.border),
+                _buildImageWidthPanel(context),
+                Divider(height: 1, thickness: 1, color: DS.border),
+                SizedBox(
+                  height: _editorViewportHeight,
+                  child: QuillEditor(
+                    controller: _quillController,
+                    focusNode: _quillFocusNode,
+                    scrollController: _quillScrollController,
+                    config: QuillEditorConfig(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 16),
+                      placeholder: 'Tulis konten artikel di sini...',
+                      embedBuilders: [
+                        ImageEmbedBuilder(
+                          imageWidthsNotifier: _imageWidthsNotifier,
+                          defaultWidth: _defaultImageWidth,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCompactToolbar(BuildContext context) {
+    return _CompactQuillToolbar(
+      controller: _quillController,
+      onInsertImage: _insertImageIntoEditor,
     );
   }
 
   Widget _buildImageSection(BuildContext context) {
     return SectionCard(
-      title: 'Gambar',
+      title: 'Gambar Sampul',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            width: double.infinity,
-            decoration: BoxDecoration(
-              color: DS.surface,
-              border: Border.all(color: DS.border),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            padding: const EdgeInsets.all(12),
-            child: Builder(builder: (context) {
-              if (_pickedImageBytes != null && _pickedImageBytes!.isNotEmpty) {
-                return Image.memory(_pickedImageBytes!,
-                    height: 160, fit: BoxFit.cover);
-              } else if ((_imagePath ?? '').isNotEmpty) {
-                final w =
-                    imageFromPath(_imagePath!, height: 160, fit: BoxFit.cover);
-                if (w != null) return w;
-              }
-              return Text('Belum ada gambar',
-                  style: TextStyle(color: DS.textDim));
-            }),
-          ),
-          const SizedBox(height: Spacing.sm),
-          Row(children: [
-            UiButton(
+          Row(
+            children: [
+              UiButton(
                 label: 'Pilih Gambar',
                 icon: Icons.image,
-                primary: false,
-                onPressed: _pickImage),
-            const SizedBox(width: Spacing.sm),
-            UiButton(
-                label: 'Hapus',
-                icon: Icons.delete,
-                primary: false,
-                onPressed: (_pickedImageBytes != null) ||
-                        ((_imagePath ?? '').isNotEmpty)
-                    ? () {
-                        setState(() {
-                          _pickedImageBytes = null;
-                          _pickedImageExt = null;
-                          _removeImage = true;
-                        });
-                      }
-                    : null),
-          ]),
-          if (kIsWeb)
-            Padding(
-              padding: const EdgeInsets.only(top: 8),
-              child: Text('Catatan: Penyimpanan gambar belum didukung di Web.',
-                  style: Theme.of(context)
-                      .textTheme
-                      .bodySmall
-                      ?.copyWith(color: DS.textDim)),
+                onPressed: _pickImage,
+              ),
+              const SizedBox(width: Spacing.sm),
+              if ((_pickedImageBytes != null && _pickedImageBytes!.isNotEmpty) ||
+                  ((_imagePath ?? '').isNotEmpty))
+                UiButton(
+                  label: 'Hapus',
+                  icon: Icons.delete,
+                  primary: false,
+                  onPressed: () {
+                    setState(() {
+                      _pickedImageBytes = null;
+                      _pickedImageExt = null;
+                      _removeImage = true;
+                    });
+                  },
+                ),
+            ],
+          ),
+          const SizedBox(height: Spacing.md),
+          if (_pickedImageBytes != null && _pickedImageBytes!.isNotEmpty)
+            ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: Image.memory(
+                _pickedImageBytes!,
+                height: 200,
+                fit: BoxFit.cover,
+              ),
+            )
+          else if ((_imagePath ?? '').isNotEmpty)
+            ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: imageFromPath(
+                _imagePath!,
+                height: 200,
+                width: double.infinity,
+                fit: BoxFit.cover,
+              ),
+            )
+          else
+            Text(
+              'Belum ada gambar sampul',
+              style:
+                  Theme.of(context).textTheme.bodySmall?.copyWith(color: DS.textDim),
             ),
         ],
       ),
     );
   }
 
-  Widget _buildMediaTypeField(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color: DS.surface,
-        borderRadius: DS.br,
-        border: Border.all(color: DS.border),
-      ),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      child: _MediaTypeChips(
-        value: _mediaType,
-        onChanged: (v) => setState(() => _mediaType = v ?? 'online'),
+  Widget _buildTagSection(BuildContext context) {
+    return SectionCard(
+      title: 'Tag',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          TagEditor(
+            label: 'Tags',
+            controller: _tagsInput,
+            tags: _tags,
+            onAdded: (v) => setState(() => _tags.add(v)),
+            onRemoved: (v) => setState(() => _tags.remove(v)),
+          ),
+          const SizedBox(height: Spacing.md),
+          TagEditor(
+            label: 'Lokasi',
+            controller: _locationInput,
+            tags: _locationTags,
+            onAdded: (v) => setState(() => _locationTags.add(v)),
+            onRemoved: (v) => setState(() => _locationTags.remove(v)),
+            suggestionFetcher: (text) async {
+              await widget.db.init();
+              return widget.db.suggestLocations(text);
+            },
+          ),
+          const SizedBox(height: Spacing.md),
+          TagEditor(
+            label: 'Penulis',
+            controller: _authorInput,
+            tags: _authorTags,
+            onAdded: (v) => setState(() => _authorTags.add(v)),
+            onRemoved: (v) => setState(() => _authorTags.remove(v)),
+            suggestionFetcher: (text) async {
+              await widget.db.init();
+              return widget.db.suggestAuthors(text);
+            },
+          ),
+          const SizedBox(height: Spacing.md),
+          TagEditor(
+            label: 'Tokoh',
+            controller: _peopleInput,
+            tags: _peopleTags,
+            onAdded: (v) => setState(() => _peopleTags.add(v)),
+            onRemoved: (v) => setState(() => _peopleTags.remove(v)),
+            suggestionFetcher: (text) async {
+              await widget.db.init();
+              return widget.db.suggestPeople(text);
+            },
+          ),
+          const SizedBox(height: Spacing.md),
+          TagEditor(
+            label: 'Organisasi',
+            controller: _orgsInput,
+            tags: _orgTags,
+            onAdded: (v) => setState(() => _orgTags.add(v)),
+            onRemoved: (v) => setState(() => _orgTags.remove(v)),
+            suggestionFetcher: (text) async {
+              await widget.db.init();
+              return widget.db.suggestOrganizations(text);
+            },
+          ),
+        ],
       ),
     );
   }
 
-  Widget _buildDateField(BuildContext context) {
-    final label =
-        _date == null ? 'Pilih tanggal terbit' : _formatDisplayDate(_date!);
-    final textStyle = Theme.of(context).textTheme.bodyMedium;
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: () => _pickPublishedDate(context),
-      child: Container(
-        decoration: BoxDecoration(
-          color: DS.surface,
-          borderRadius: DS.br,
-          border: Border.all(color: DS.border),
-        ),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-        child: Row(
-          children: [
-            Icon(Icons.event, color: DS.textDim),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                label,
-                style: textStyle?.copyWith(
-                  color: _date == null ? DS.textDim : DS.text,
-                ),
-              ),
-            ),
-            Icon(Icons.keyboard_arrow_down, color: DS.textDim),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildLabeledField(
-    BuildContext context,
-    String label,
-    Widget child,
-  ) {
-    final style =
-        Theme.of(context).textTheme.bodySmall?.copyWith(color: DS.textDim);
+  Widget _buildLabeledField(BuildContext context, String label, Widget child) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label, style: style),
-        const SizedBox(height: 6),
+        Text(
+          label,
+          style: Theme.of(context)
+              .textTheme
+              .bodySmall
+              ?.copyWith(fontWeight: FontWeight.w600),
+        ),
+        const SizedBox(height: Spacing.xs),
         child,
       ],
     );
-  }
-
-  String _formatDisplayDate(DateTime date) {
-    String twoDigits(int value) => value.toString().padLeft(2, '0');
-    return '${date.year}-${twoDigits(date.month)}-${twoDigits(date.day)}';
-  }
-
-  Future<void> _pickPublishedDate(BuildContext context) async {
-    FocusScope.of(context).unfocus();
-    final now = DateTime.now();
-    final initialDate = _date ?? now;
-    final earliest = DateTime(1990);
-    final adjustedInitial =
-        initialDate.isBefore(earliest) ? earliest : initialDate;
-    final picked = await showDatePicker(
-      context: context,
-      firstDate: earliest,
-      lastDate: DateTime(now.year + 1, 12, 31),
-      initialDate: adjustedInitial,
-    );
-    if (picked != null) {
-      setState(() {
-        _date = picked;
-      });
-    }
   }
 }
 
@@ -1325,6 +1784,7 @@ class _MediaTypeChips extends StatelessWidget {
   final String value;
   final ValueChanged<String?> onChanged;
   const _MediaTypeChips({required this.value, required this.onChanged});
+
   @override
   Widget build(BuildContext context) {
     const types = [
@@ -1336,37 +1796,39 @@ class _MediaTypeChips extends StatelessWidget {
     ];
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
-      child: Row(children: [
-        for (final t in types) ...[
-          Padding(
-            padding: const EdgeInsets.only(right: 8),
-            child: InkWell(
-              onTap: () => onChanged(t.$1),
-              borderRadius: BorderRadius.circular(20),
-              child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                decoration: BoxDecoration(
-                  color: (value == t.$1
-                      ? ((t.$1 == 'online' || t.$1 == 'tv')
-                          ? DS.accentLite
-                          : DS.accent2Lite)
-                      : DS.surface),
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: DS.border),
-                ),
-                child: Text(t.$2,
+      child: Row(
+        children: [
+          for (final t in types) ...[
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: InkWell(
+                onTap: () => onChanged(t.$1),
+                borderRadius: BorderRadius.circular(20),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: value == t.$1
+                        ? ((t.$1 == 'online' || t.$1 == 'tv')
+                            ? DS.accentLite
+                            : DS.accent2Lite)
+                        : DS.surface,
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: DS.border),
+                  ),
+                  child: Text(
+                    t.$2,
                     style: TextStyle(
-                        color: value == t.$1
-                            ? ((t.$1 == 'online' || t.$1 == 'tv')
-                                ? DS.accent
-                                : DS.accent2)
-                            : DS.text)),
+                      color: value == t.$1
+                          ? ((t.$1 == 'online' || t.$1 == 'tv') ? DS.accent : DS.accent2)
+                          : DS.text,
+                    ),
+                  ),
+                ),
               ),
             ),
-          ),
-        ]
-      ]),
+          ],
+        ],
+      ),
     );
   }
 }
@@ -1375,187 +1837,214 @@ class _KindChips extends StatelessWidget {
   final String value;
   final ValueChanged<String?> onChanged;
   const _KindChips({required this.value, required this.onChanged});
+
   @override
   Widget build(BuildContext context) {
     const kinds = [
       ('artikel', 'Artikel'),
       ('opini', 'Opini'),
     ];
-    return Row(children: [
-      for (final k in kinds) ...[
-        Padding(
-          padding: const EdgeInsets.only(right: 8),
-          child: InkWell(
-            onTap: () => onChanged(k.$1),
-            borderRadius: BorderRadius.circular(20),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              decoration: BoxDecoration(
-                color: value == k.$1 ? DS.accentLite : DS.surface,
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: DS.border),
+    return Row(
+      children: [
+        for (final k in kinds) ...[
+          Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: InkWell(
+              onTap: () => onChanged(k.$1),
+              borderRadius: BorderRadius.circular(20),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: value == k.$1 ? DS.accentLite : DS.surface,
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: DS.border),
+                ),
+                child: Text(
+                  k.$2,
+                  style: TextStyle(color: value == k.$1 ? DS.accent : DS.text),
+                ),
               ),
-              child: Text(k.$2,
-                  style: TextStyle(color: value == k.$1 ? DS.accent : DS.text)),
             ),
           ),
-        ),
-      ]
-    ]);
-  }
-}
-
-class _KeepAlive extends StatefulWidget {
-  final Widget child;
-  const _KeepAlive({required this.child});
-  @override
-  State<_KeepAlive> createState() => _KeepAliveState();
-}
-
-class _KeepAliveState extends State<_KeepAlive>
-    with AutomaticKeepAliveClientMixin {
-  @override
-  bool get wantKeepAlive => true;
-  @override
-  Widget build(BuildContext context) {
-    super.build(context);
-    return widget.child;
-  }
-}
-
-class _ToolbarIconButton extends StatelessWidget {
-  final IconData icon;
-  final String tooltip;
-  final VoidCallback onPressed;
-
-  const _ToolbarIconButton(
-      {required this.icon, required this.tooltip, required this.onPressed});
-
-  @override
-  Widget build(BuildContext context) {
-    return Tooltip(
-      message: tooltip,
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: onPressed,
-          borderRadius: BorderRadius.circular(6),
-          child: Container(
-            padding: const EdgeInsets.all(6),
-            decoration: BoxDecoration(
-              color: DS.surface2,
-              borderRadius: BorderRadius.circular(6),
-              border: Border.all(color: DS.border),
-            ),
-            child: Icon(icon, size: 18, color: DS.text),
-          ),
-        ),
-      ),
+        ],
+      ],
     );
   }
 }
 
-class _DataUriImagePlugin extends SuperEditorPlugin {
-  const _DataUriImagePlugin();
+class _CompactQuillToolbar extends StatefulWidget {
+  final QuillController controller;
+  final VoidCallback onInsertImage;
+
+  const _CompactQuillToolbar({
+    required this.controller,
+    required this.onInsertImage,
+  });
 
   @override
-  List<ComponentBuilder> get componentBuilders => const [
-        _DataUriImageComponentBuilder(),
-      ];
+  State<_CompactQuillToolbar> createState() => _CompactQuillToolbarState();
 }
 
-class _DataUriImageComponentBuilder extends ImageComponentBuilder {
-  const _DataUriImageComponentBuilder();
+class _CompactQuillToolbarState extends State<_CompactQuillToolbar> {
+  bool _showAll = false;
 
-  @override
-  SingleColumnLayoutComponentViewModel? createViewModel(
-      Document document, DocumentNode node) {
-    final viewModel = super.createViewModel(document, node);
-    if (viewModel is ImageComponentViewModel && node is ImageNode) {
-      final widthMeta = node.getMetadataValue('width');
-      if (widthMeta is num) {
-        final width = widthMeta.toDouble();
-        viewModel.maxWidth = width;
-      }
-    }
-    return viewModel;
+  Widget _buildToolbarButton({
+    required IconData icon,
+    required String tooltip,
+    required VoidCallback onPressed,
+    bool? isActive,
+  }) {
+    return Tooltip(
+      message: tooltip,
+      child: IconButton(
+        icon: Icon(icon, size: 20),
+        onPressed: onPressed,
+        color: isActive == true ? DS.accent : DS.text,
+        iconSize: 20,
+        padding: const EdgeInsets.all(4),
+        constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+      ),
+    );
   }
 
-  @override
-  Widget? createComponent(
-    SingleColumnDocumentComponentContext componentContext,
-    SingleColumnLayoutComponentViewModel componentViewModel,
-  ) {
-    if (componentViewModel is! ImageComponentViewModel) {
-      return super.createComponent(componentContext, componentViewModel);
-    }
-
-    final imageUrl = componentViewModel.imageUrl;
-    if (!imageUrl.startsWith('data:')) {
-      return super.createComponent(componentContext, componentViewModel);
-    }
-
-    final imageViewModel = componentViewModel as ImageComponentViewModel;
-    final explicitWidth = imageViewModel.expectedSize?.width?.toDouble() ??
-        imageViewModel.maxWidth;
-
-    return ImageComponent(
-      componentKey: componentContext.componentKey,
-      imageUrl: imageUrl,
-      expectedSize: componentViewModel.expectedSize,
-      selection: componentViewModel.selection?.nodeSelection
-          as UpstreamDownstreamNodeSelection?,
-      selectionColor: componentViewModel.selectionColor,
-      opacity: componentViewModel.opacity,
-      imageBuilder: (context, _) {
-        final bytes = _decodeDataUriBytes(imageUrl);
-        if (bytes == null) {
-          debugPrint('Failed to decode data URI image');
-          return const SizedBox.shrink();
-        }
-        final imageWidget = Image.memory(
-          bytes,
-          fit: BoxFit.contain,
+  Widget _buildAttributeButton({
+    required Attribute attribute,
+    required IconData icon,
+    required String tooltip,
+  }) {
+    final isActive = widget.controller.getSelectionStyle().containsKey(attribute.key);
+    return _buildToolbarButton(
+      icon: icon,
+      tooltip: tooltip,
+      isActive: isActive,
+      onPressed: () {
+        widget.controller.formatSelection(
+          isActive ? Attribute.clone(attribute, null) : attribute,
         );
-        if (explicitWidth == null) {
-          return imageWidget;
-        }
-        return Align(
-          alignment: Alignment.centerLeft,
-          child: ConstrainedBox(
-            constraints: BoxConstraints(
-              maxWidth: explicitWidth!,
-            ),
-            child: imageWidget,
-          ),
-        );
+        setState(() {}); // Rebuild to update button state
       },
     );
   }
 
-  Uint8List? _decodeDataUriBytes(String uri) {
-    final trimmed = uri.trim();
-    try {
-      return UriData.parse(trimmed).contentAsBytes();
-    } catch (_) {
-      final normalized = trimmed.replaceAll(RegExp(r'\s+'), '');
-      if (normalized != trimmed) {
-        try {
-          return UriData.parse(normalized).contentAsBytes();
-        } catch (_) {}
-      }
-      final match = RegExp(r'^data:([^;]+);base64,(.*)$',
-              caseSensitive: false, dotAll: true)
-          .firstMatch(normalized);
-      if (match != null) {
-        final payload = match.group(2);
-        if (payload != null) {
-          try {
-            return base64Decode(payload);
-          } catch (_) {}
-        }
-      }
-    }
-    return null;
+  @override
+  Widget build(BuildContext context) {
+    final row1Buttons = [
+      _buildAttributeButton(
+        attribute: Attribute.bold,
+        icon: Icons.format_bold,
+        tooltip: 'Bold',
+      ),
+      _buildAttributeButton(
+        attribute: Attribute.italic,
+        icon: Icons.format_italic,
+        tooltip: 'Italic',
+      ),
+      _buildAttributeButton(
+        attribute: Attribute.underline,
+        icon: Icons.format_underlined,
+        tooltip: 'Underline',
+      ),
+      _buildAttributeButton(
+        attribute: Attribute.strikeThrough,
+        icon: Icons.strikethrough_s,
+        tooltip: 'Strikethrough',
+      ),
+      _buildToolbarButton(
+        icon: Icons.image_outlined,
+        tooltip: 'Sisipkan gambar',
+        onPressed: widget.onInsertImage,
+      ),
+    ];
+
+    final row2Buttons = [
+      _buildAttributeButton(
+        attribute: Attribute.ul,
+        icon: Icons.format_list_bulleted,
+        tooltip: 'Bullet List',
+      ),
+      _buildAttributeButton(
+        attribute: Attribute.ol,
+        icon: Icons.format_list_numbered,
+        tooltip: 'Numbered List',
+      ),
+      _buildAttributeButton(
+        attribute: Attribute.h1,
+        icon: Icons.looks_one,
+        tooltip: 'Heading 1',
+      ),
+      _buildAttributeButton(
+        attribute: Attribute.h2,
+        icon: Icons.looks_two,
+        tooltip: 'Heading 2',
+      ),
+      _buildToolbarButton(
+        icon: _showAll ? Icons.expand_less : Icons.expand_more,
+        tooltip: _showAll ? 'Sembunyikan' : 'Tampilkan semua',
+        onPressed: () => setState(() => _showAll = !_showAll),
+      ),
+    ];
+
+    final additionalButtons = _showAll
+        ? [
+            _buildAttributeButton(
+              attribute: Attribute.inlineCode,
+              icon: Icons.code,
+              tooltip: 'Inline Code',
+            ),
+            _buildAttributeButton(
+              attribute: Attribute.blockQuote,
+              icon: Icons.format_quote,
+              tooltip: 'Block Quote',
+            ),
+            _buildAttributeButton(
+              attribute: Attribute.codeBlock,
+              icon: Icons.code_rounded,
+              tooltip: 'Code Block',
+            ),
+            _buildAttributeButton(
+              attribute: Attribute.leftAlignment,
+              icon: Icons.format_align_left,
+              tooltip: 'Align Left',
+            ),
+            _buildAttributeButton(
+              attribute: Attribute.centerAlignment,
+              icon: Icons.format_align_center,
+              tooltip: 'Align Center',
+            ),
+            _buildAttributeButton(
+              attribute: Attribute.rightAlignment,
+              icon: Icons.format_align_right,
+              tooltip: 'Align Right',
+            ),
+          ]
+        : <Widget>[];
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Wrap(
+            spacing: 4,
+            runSpacing: 4,
+            children: row1Buttons,
+          ),
+          const SizedBox(height: 4),
+          Wrap(
+            spacing: 4,
+            runSpacing: 4,
+            children: row2Buttons,
+          ),
+          if (_showAll && additionalButtons.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Wrap(
+              spacing: 4,
+              runSpacing: 4,
+              children: additionalButtons,
+            ),
+          ],
+        ],
+      ),
+    );
   }
 }

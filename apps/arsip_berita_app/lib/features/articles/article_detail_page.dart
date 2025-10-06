@@ -9,7 +9,9 @@ import '../../ui/theme.dart';
 import '../../ui/design.dart';
 import '../../widgets/ui_scaffold.dart';
 import '../../widgets/ui_card.dart';
+import '../../widgets/image_preview.dart';
 import 'package:flutter_widget_from_html_core/flutter_widget_from_html_core.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'article_form_page.dart';
 
 class ArticleDetailPage extends StatefulWidget {
@@ -129,6 +131,150 @@ class _ArticleDetailPageState extends State<ArticleDetailPage> {
     return html;
   }
 
+  Future<void> _openUrl(String urlString) async {
+    final shouldOpen = await showDialog<bool>(
+      context: context,
+      builder: (context) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 420),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 32),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 76,
+                  height: 76,
+                  decoration: BoxDecoration(
+                    color: DS.accent.withValues(alpha: 0.12),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    Icons.open_in_new,
+                    size: 36,
+                    color: DS.accent,
+                  ),
+                ),
+                const SizedBox(height: 20),
+                Text(
+                  'Buka Link?',
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.w600,
+                        color: DS.text,
+                      ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'Apakah Anda ingin membuka link ini di browser?',
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: DS.textDim,
+                      ),
+                ),
+                const SizedBox(height: 12),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: DS.surface,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: DS.border),
+                  ),
+                  child: Text(
+                    urlString,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: DS.accent,
+                          fontFamily: 'monospace',
+                        ),
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                const SizedBox(height: 28),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextButton(
+                        onPressed: () => Navigator.of(context).pop(false),
+                        style: TextButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                            side: BorderSide(color: DS.border),
+                          ),
+                        ),
+                        child: const Text('Batal'),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: ElevatedButton(
+                        onPressed: () => Navigator.of(context).pop(true),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: DS.accent,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                        ),
+                        child: const Text('Buka'),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    if (shouldOpen == true && mounted) {
+      try {
+        final uri = Uri.parse(urlString);
+        final canLaunch = await canLaunchUrl(uri);
+
+        if (!canLaunch) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Tidak dapat membuka URL. Browser tidak tersedia.'),
+                backgroundColor: Colors.red,
+              ),
+            );
+          }
+          return;
+        }
+
+        final launched = await launchUrl(
+          uri,
+          mode: LaunchMode.externalApplication,
+        );
+
+        if (!launched && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Gagal membuka URL di browser.'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Error: ${e.toString()}'),
+              backgroundColor: Colors.red,
+              duration: const Duration(seconds: 4),
+            ),
+          );
+        }
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final a = widget.article;
@@ -157,6 +303,7 @@ class _ArticleDetailPageState extends State<ArticleDetailPage> {
                   widget.article.description = latest.description;
                   widget.article.excerpt = latest.excerpt;
                   widget.article.imagePath = latest.imagePath;
+                  widget.article.tags = latest.tags;
                   _tagsFuture = _loadTags();
                   _prepareDesc();
                 });
@@ -177,8 +324,31 @@ class _ArticleDetailPageState extends State<ArticleDetailPage> {
                     final w = imageFromPath(a.imagePath!,
                         width: double.infinity, height: 180, fit: BoxFit.cover);
                     if (w == null) return const SizedBox.shrink();
-                    return ClipRRect(
-                        borderRadius: BorderRadius.circular(8), child: w);
+
+                    // Get ImageProvider for preview
+                    final ImageProvider imageProvider;
+                    if (a.imagePath!.startsWith('http')) {
+                      imageProvider = NetworkImage(a.imagePath!);
+                    } else {
+                      imageProvider = FileImage(File(a.imagePath!));
+                    }
+
+                    return GestureDetector(
+                      onTap: () {
+                        ImagePreview.show(
+                          context,
+                          imageProvider: imageProvider,
+                          heroTag: 'cover-${a.id}',
+                        );
+                      },
+                      child: Hero(
+                        tag: 'cover-${a.id}',
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(8),
+                          child: w,
+                        ),
+                      ),
+                    );
                   }),
                 ),
               Text(a.title,
@@ -197,6 +367,13 @@ class _ArticleDetailPageState extends State<ArticleDetailPage> {
                   final orgs = snapshot.data?.$3 ?? const <String>[];
                   final locs = snapshot.data?.$4 ?? const <String>[];
                   final chips = <Widget>[];
+
+                  // Add general tags first
+                  final generalTags = a.tags ?? const <String>[];
+                  for (final t in generalTags) {
+                    chips.add(_compactTagChip(Icons.local_offer, t));
+                  }
+
                   for (final t in authors) {
                     chips.add(_compactTagChip(Icons.person, t));
                   }
@@ -216,7 +393,32 @@ class _ArticleDetailPageState extends State<ArticleDetailPage> {
                   );
                 },
               ),
-              Text(a.url, style: TextStyle(color: DS.textDim)),
+              const SizedBox(height: Spacing.sm),
+              GestureDetector(
+                onTap: () => _openUrl(a.url),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        a.url,
+                        style: TextStyle(
+                          color: DS.accent,
+                          decoration: TextDecoration.underline,
+                          decorationColor: DS.accent.withValues(alpha: 0.5),
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Icon(
+                      Icons.open_in_new,
+                      size: 16,
+                      color: DS.accent,
+                    ),
+                  ],
+                ),
+              ),
               const SizedBox(height: Spacing.sm),
               Row(children: [
                 if (a.publishedAt != null) ...[
@@ -248,6 +450,12 @@ class _ArticleDetailPageState extends State<ArticleDetailPage> {
                   HtmlWidget(
                     _renderDesc!,
                     textStyle: TextStyle(color: DS.text),
+                    customStylesBuilder: (element) {
+                      if (element.localName == 'p') {
+                        return {'margin-bottom': '0px', 'margin-top': '0px'};
+                      }
+                      return null;
+                    },
                     customWidgetBuilder: (element) {
                       if (element.localName == 'img') {
                         final src = element.attributes['src'];
@@ -257,19 +465,53 @@ class _ArticleDetailPageState extends State<ArticleDetailPage> {
                         if (widthStr != null) {
                           width = double.tryParse(widthStr);
                         }
-                        final imageWidget = src.startsWith('data:')
-                            ? Image.memory(
-                                UriData.parse(src).contentAsBytes(),
-                                width: width,
-                              )
-                            : Image.network(
-                                src,
-                                width: width,
-                              );
-                        return Align(
-                          alignment: Alignment.centerLeft,
-                          child: imageWidget,
-                        );
+                        try {
+                          final ImageProvider imageProvider;
+                          final Widget imageWidget;
+
+                          if (src.startsWith('data:')) {
+                            final bytes = UriData.parse(src).contentAsBytes();
+                            imageProvider = MemoryImage(bytes);
+                            imageWidget = Image.memory(
+                              bytes,
+                              width: width,
+                              fit: BoxFit.contain,
+                              errorBuilder: (context, error, stackTrace) {
+                                return const Icon(Icons.broken_image);
+                              },
+                            );
+                          } else {
+                            imageProvider = NetworkImage(src);
+                            imageWidget = Image.network(
+                              src,
+                              width: width,
+                              fit: BoxFit.contain,
+                              errorBuilder: (context, error, stackTrace) {
+                                return const Icon(Icons.broken_image);
+                              },
+                            );
+                          }
+
+                          return Align(
+                            alignment: Alignment.centerLeft,
+                            child: GestureDetector(
+                              onTap: () {
+                                ImagePreview.show(
+                                  context,
+                                  imageProvider: imageProvider,
+                                  heroTag: 'content-img-${src.hashCode}',
+                                );
+                              },
+                              child: Hero(
+                                tag: 'content-img-${src.hashCode}',
+                                child: imageWidget,
+                              ),
+                            ),
+                          );
+                        } catch (e) {
+                          debugPrint('Error loading image: $e');
+                          return const Icon(Icons.broken_image);
+                        }
                       }
                       return null;
                     },
@@ -279,6 +521,12 @@ class _ArticleDetailPageState extends State<ArticleDetailPage> {
                     child: HtmlWidget(
                       _renderDesc!,
                       textStyle: TextStyle(color: DS.text),
+                      customStylesBuilder: (element) {
+                        if (element.localName == 'p') {
+                          return {'margin-bottom': '0px', 'margin-top': '0px'};
+                        }
+                        return null;
+                      },
                       customWidgetBuilder: (element) {
                         if (element.localName == 'img') {
                           final src = element.attributes['src'];
@@ -288,19 +536,53 @@ class _ArticleDetailPageState extends State<ArticleDetailPage> {
                           if (widthStr != null) {
                             width = double.tryParse(widthStr);
                           }
-                          final imageWidget = src.startsWith('data:')
-                              ? Image.memory(
-                                  UriData.parse(src).contentAsBytes(),
-                                  width: width,
-                                )
-                              : Image.network(
-                                  src,
-                                  width: width,
-                                );
-                          return Align(
-                            alignment: Alignment.centerLeft,
-                            child: imageWidget,
-                          );
+                          try {
+                            final ImageProvider imageProvider;
+                            final Widget imageWidget;
+
+                            if (src.startsWith('data:')) {
+                              final bytes = UriData.parse(src).contentAsBytes();
+                              imageProvider = MemoryImage(bytes);
+                              imageWidget = Image.memory(
+                                bytes,
+                                width: width,
+                                fit: BoxFit.contain,
+                                errorBuilder: (context, error, stackTrace) {
+                                  return const Icon(Icons.broken_image);
+                                },
+                              );
+                            } else {
+                              imageProvider = NetworkImage(src);
+                              imageWidget = Image.network(
+                                src,
+                                width: width,
+                                fit: BoxFit.contain,
+                                errorBuilder: (context, error, stackTrace) {
+                                  return const Icon(Icons.broken_image);
+                                },
+                              );
+                            }
+
+                            return Align(
+                              alignment: Alignment.centerLeft,
+                              child: GestureDetector(
+                                onTap: () {
+                                  ImagePreview.show(
+                                    context,
+                                    imageProvider: imageProvider,
+                                    heroTag: 'content-img-${src.hashCode}',
+                                  );
+                                },
+                                child: Hero(
+                                  tag: 'content-img-${src.hashCode}',
+                                  child: imageWidget,
+                                ),
+                              ),
+                            );
+                          } catch (e) {
+                            debugPrint('Error loading image: $e');
+                            return const Icon(Icons.broken_image);
+                          }
                         }
                         return null;
                       },

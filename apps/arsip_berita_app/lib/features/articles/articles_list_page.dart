@@ -29,6 +29,7 @@ class _ArticlesListPageState extends State<ArticlesListPage> {
   final _db = LocalDatabase();
   final DriveBackupService _driveBackup = DriveBackupService();
   final _q = TextEditingController();
+  final _scrollController = ScrollController();
   bool _driveBusy = false;
   List<ArticleWithMedium> _results = [];
   String? _mediaType; // null = semua
@@ -37,10 +38,22 @@ class _ArticlesListPageState extends State<ArticlesListPage> {
   int _statTotal = 0;
   int _statMonth = 0;
 
+  // Pagination
+  static const int _pageSize = 7;
+  int _currentPage = 0;
+  bool _isLoadingMore = false;
+  bool _hasMore = true;
+
   @override
   void initState() {
     super.initState();
+    _q.addListener(_updateClearButton);
     _init();
+  }
+
+  void _updateClearButton() {
+    // Hanya rebuild untuk update tombol clear, tidak trigger search
+    setState(() {});
   }
 
   Future<void> _init() async {
@@ -50,29 +63,60 @@ class _ArticlesListPageState extends State<ArticlesListPage> {
 
   Future<void> _search() async {
     await _db.init();
+    setState(() {
+      _currentPage = 0;
+      _hasMore = true;
+      _results = [];
+    });
+
     final list = await _db.searchArticles(
       q: _q.text,
       mediaType:
           (_mediaType == null || _mediaType == 'all') ? null : _mediaType,
       startDate: _startDate,
       endDate: _endDate,
+      limit: _pageSize,
+      offset: 0,
     );
+
     setState(() {
       _results = list;
+      _hasMore = list.length == _pageSize;
     });
-    _recomputeStats();
+    await _recomputeStats();
   }
 
-  void _recomputeStats() {
-    final now = DateTime.now();
-    final startMonth = DateTime(now.year, now.month, 1);
-    final nextMonth = DateTime(now.year, now.month + 1, 1);
-    final total = _results.length;
-    final month = _results.where((e) {
-      final d = e.article.publishedAt;
-      if (d == null) return false;
-      return !d.isBefore(startMonth) && d.isBefore(nextMonth);
-    }).length;
+  Future<void> _loadMore() async {
+    if (_isLoadingMore || !_hasMore) return;
+
+    setState(() {
+      _isLoadingMore = true;
+    });
+
+    await _db.init();
+    final nextPage = _currentPage + 1;
+    final list = await _db.searchArticles(
+      q: _q.text,
+      mediaType:
+          (_mediaType == null || _mediaType == 'all') ? null : _mediaType,
+      startDate: _startDate,
+      endDate: _endDate,
+      limit: _pageSize,
+      offset: nextPage * _pageSize,
+    );
+
+    setState(() {
+      _currentPage = nextPage;
+      _results.addAll(list);
+      _hasMore = list.length == _pageSize;
+      _isLoadingMore = false;
+    });
+  }
+
+  Future<void> _recomputeStats() async {
+    await _db.init();
+    final total = await _db.totalArticles();
+    final month = await _db.thisMonthArticles();
     setState(() {
       _statTotal = total;
       _statMonth = month;
@@ -411,6 +455,7 @@ class _ArticlesListPageState extends State<ArticlesListPage> {
   @override
   void dispose() {
     _q.dispose();
+    _scrollController.dispose();
     unawaited(_driveBackup.dispose());
     super.dispose();
   }
@@ -464,7 +509,7 @@ class _ArticlesListPageState extends State<ArticlesListPage> {
                     context,
                     MaterialPageRoute(
                         builder: (_) => ArticleFormPage(db: _db)));
-                _search();
+                await _search();
               }),
         ],
         child: PageContainer(
@@ -537,14 +582,38 @@ class _ArticlesListPageState extends State<ArticlesListPage> {
                       },
                     ),
                     const SizedBox(height: Spacing.sm),
-                    UiInput(
-                      controller: _q,
-                      hint: 'Cari Judul',
-                      prefix: Icons.search,
-                      contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 12, vertical: 12),
-                      onChanged: (_) => _search(),
-                      onSubmitted: (_) => _search(),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: UiInput(
+                            controller: _q,
+                            hint: 'Cari artikel, tokoh, organisasi, lokasi...',
+                            prefix: Icons.search,
+                            suffix: _q.text.isNotEmpty
+                                ? InkWell(
+                                    onTap: () {
+                                      setState(() {
+                                        _q.clear();
+                                      });
+                                      _search();
+                                    },
+                                    borderRadius: BorderRadius.circular(10),
+                                    child: const Padding(
+                                      padding: EdgeInsets.all(4),
+                                      child: Icon(Icons.close, size: 18),
+                                    ),
+                                  )
+                                : null,
+                            onSubmitted: (_) => _search(),
+                          ),
+                        ),
+                        const SizedBox(width: Spacing.sm),
+                        UiButton(
+                          label: 'Cari',
+                          icon: Icons.search,
+                          onPressed: _search,
+                        ),
+                      ],
                     ),
                     // Reload icon removed; pull-to-refresh is used instead
                   ]);
@@ -599,14 +668,38 @@ class _ArticlesListPageState extends State<ArticlesListPage> {
                     )),
                   ]),
                   const SizedBox(height: Spacing.sm),
-                  UiInput(
-                    controller: _q,
-                    hint: 'Cari Judul',
-                    prefix: Icons.search,
-                    contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 12, vertical: 12),
-                    onChanged: (_) => _search(),
-                    onSubmitted: (_) => _search(),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: UiInput(
+                          controller: _q,
+                          hint: 'Cari artikel, tokoh, organisasi, lokasi...',
+                          prefix: Icons.search,
+                          suffix: _q.text.isNotEmpty
+                              ? InkWell(
+                                  onTap: () {
+                                    setState(() {
+                                      _q.clear();
+                                    });
+                                    _search();
+                                  },
+                                  borderRadius: BorderRadius.circular(10),
+                                  child: const Padding(
+                                    padding: EdgeInsets.all(4),
+                                    child: Icon(Icons.close, size: 18),
+                                  ),
+                                )
+                              : null,
+                          onSubmitted: (_) => _search(),
+                        ),
+                      ),
+                      const SizedBox(width: Spacing.sm),
+                      UiButton(
+                        label: 'Cari',
+                        icon: Icons.search,
+                        onPressed: _search,
+                      ),
+                    ],
                   ),
                 ]);
           }),
@@ -616,8 +709,9 @@ class _ArticlesListPageState extends State<ArticlesListPage> {
               onRefresh: () async {
                 await _search();
               },
-              child: _results.isEmpty
+              child: _results.isEmpty && !_isLoadingMore
                   ? ListView(
+                      controller: _scrollController,
                       physics: const AlwaysScrollableScrollPhysics(),
                       children: [
                         EmptyState(
@@ -633,16 +727,66 @@ class _ArticlesListPageState extends State<ArticlesListPage> {
                                     MaterialPageRoute(
                                         builder: (_) =>
                                             ArticleFormPage(db: _db)));
-                                _search();
+                                await _search();
                               }),
                         ),
                       ],
                     )
                   : ListView.separated(
-                      itemCount: _results.length,
+                      controller: _scrollController,
+                      itemCount: _results.length + (_hasMore || _isLoadingMore ? 1 : 0),
                       separatorBuilder: (_, __) =>
                           const SizedBox(height: Spacing.sm),
                       itemBuilder: (ctx, i) {
+                        // Load More button or loading indicator at the end
+                        if (i == _results.length) {
+                          if (_isLoadingMore) {
+                            return Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 24),
+                              child: Center(
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    SizedBox(
+                                      width: 24,
+                                      height: 24,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2.5,
+                                        valueColor: AlwaysStoppedAnimation<Color>(
+                                            DS.accent),
+                                      ),
+                                    ),
+                                    const SizedBox(height: 12),
+                                    Text(
+                                      'Memuat artikel...',
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .bodySmall
+                                          ?.copyWith(color: DS.textDim),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            );
+                          }
+
+                          // Show Load More button if there's more data
+                          if (_hasMore) {
+                            return Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 16),
+                              child: Center(
+                                child: UiButton(
+                                  label: 'Muat Lebih Banyak',
+                                  icon: Icons.refresh,
+                                  onPressed: _loadMore,
+                                ),
+                              ),
+                            );
+                          }
+
+                          return const SizedBox.shrink();
+                        }
+
                         final a = _results[i].article;
                         final m = _results[i].medium;
                         final type = m?.type;
@@ -659,16 +803,22 @@ class _ArticlesListPageState extends State<ArticlesListPage> {
                             final authors = snapshot.data ?? const <String>[];
                             final subtitle =
                                 authors.isEmpty ? '-' : authors.join(', ');
+                            final displayTitle = a.title.isEmpty ? '(Tanpa judul)' : a.title;
                             return UiListItem(
-                              title: a.title,
+                              title: displayTitle,
                               subtitle: subtitle,
                               accentColor: ac,
                               leading: thumb,
-                              onTap: () => Navigator.push(
+                              onTap: () async {
+                                await Navigator.push(
                                   context,
                                   MaterialPageRoute(
-                                      builder: (_) =>
-                                          ArticleDetailPage(article: a))),
+                                    builder: (_) => ArticleDetailPage(article: a)
+                                  )
+                                );
+                                // Refresh data setelah kembali dari detail
+                                await _search();
+                              },
                             );
                           },
                         );

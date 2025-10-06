@@ -12,7 +12,8 @@ class TagEditor extends StatefulWidget {
   final void Function(String value) onAdded;
   final void Function(String value) onRemoved;
   final Future<List<String>> Function(String prefix)? suggestionFetcher;
-  const TagEditor({super.key, required this.label, required this.controller, required this.tags, required this.onAdded, required this.onRemoved, this.suggestionFetcher});
+  final String? errorText;
+  const TagEditor({super.key, required this.label, required this.controller, required this.tags, required this.onAdded, required this.onRemoved, this.suggestionFetcher, this.errorText});
   @override
   State<TagEditor> createState() => _TagEditorState();
 }
@@ -43,9 +44,10 @@ class _TagEditorState extends State<TagEditor> {
   }
   @override
   Widget build(BuildContext context) {
+    final hasError = widget.errorText != null && widget.errorText!.isNotEmpty;
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Row(children: [
-        Expanded(child: UiInput(controller: widget.controller, hint: widget.label)),
+        Expanded(child: UiInput(controller: widget.controller, hint: widget.label, errorText: hasError && widget.tags.isEmpty ? widget.errorText : null)),
         const SizedBox(width: Spacing.sm),
         UiButton(label: 'Tambah', icon: Icons.add, onPressed: () { final v = widget.controller.text.trim(); if (v.isNotEmpty && !widget.tags.contains(v)) { widget.onAdded(v); widget.controller.clear(); } }, color: DS.accent2),
       ]),

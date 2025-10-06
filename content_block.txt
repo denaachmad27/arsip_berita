@@ -1,0 +1,59 @@
+                      SectionCard(
+                        title: 'Konten',
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Container(
+                              decoration: BoxDecoration(
+                                color: DS.surface,
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(color: DS.border),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  _buildEditorHeader(context),
+                                  const Divider(height: 1, thickness: 1, color: DS.border),
+                                  _buildImageWidthPanel(context),
+                                  const Divider(height: 1, thickness: 1, color: DS.border),
+                                  QuillSimpleToolbar(
+                                    controller: _quillController,
+                                    config: QuillSimpleToolbarConfig(
+                                      showFontFamily: false,
+                                      showFontSize: false,
+                                      showLineHeightButton: false,
+                                      showSearchButton: false,
+                                      showSubscript: false,
+                                      showSuperscript: false,
+                                      showClipboardCopy: false,
+                                      showClipboardCut: false,
+                                      showClipboardPaste: false,
+                                      showAlignmentButtons: true,
+                                      customButtons: [
+                                        QuillToolbarCustomButtonOptions(
+                                          icon: const Icon(Icons.image_outlined),
+                                          tooltip: 'Sisipkan gambar',
+                                          onPressed: _insertImageIntoEditor,
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  const Divider(height: 1, thickness: 1, color: DS.border),
+                                  SizedBox(
+                                    height: _editorViewportHeight,
+                                    child: QuillEditor.basic(
+                                      controller: _quillController,
+                                      focusNode: _quillFocusNode,
+                                      config: QuillEditorConfig(
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 12, vertical: 16),
+                                        placeholder: 'Tulis konten artikel di sini...',
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),

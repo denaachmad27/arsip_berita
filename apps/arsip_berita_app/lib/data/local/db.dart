@@ -50,7 +50,7 @@ class LocalDatabase {
     print('Database exists: $exists');
     _db = await openDatabase(
       path,
-      version: 6,
+      version: 7,
       onCreate: (db, v) async {
         await db.execute('''
           create table media (
@@ -71,6 +71,7 @@ class LocalDatabase {
             description text,
             excerpt text,
             image_path text,
+            tags text,
             updated_at text not null
           );
         ''');
@@ -218,6 +219,13 @@ class LocalDatabase {
             // ignore if column already exists
           }
         }
+        if (oldV < 7) {
+          try {
+            await db.execute('alter table articles add column tags text');
+          } catch (e) {
+            // ignore if column already exists
+          }
+        }
       },
     );
 
@@ -314,15 +322,42 @@ class LocalDatabase {
       {String q = '',
       String? mediaType,
       DateTime? startDate,
-      DateTime? endDate}) async {
+      DateTime? endDate,
+      int? limit,
+      int? offset}) async {
     final db = _db;
     if (db == null) return [];
     final where = <String>[];
     final args = <Object?>[];
     if (q.isNotEmpty) {
       final query = '%${q.replaceAll('%', '\\%').replaceAll('_', '\\_')}%';
-      where.add("lower(a.title) like lower(?) escape '\\'");
-      args.addAll([query]);
+      // Global search: judul, deskripsi, excerpt, penulis, tokoh, organisasi, lokasi
+      where.add('''(
+        lower(a.title) like lower(?) escape '\\' or
+        lower(a.description) like lower(?) escape '\\' or
+        lower(a.excerpt) like lower(?) escape '\\' or
+        exists (
+          select 1 from articles_authors aa
+          inner join authors au on au.id = aa.author_id
+          where aa.article_id = a.id and lower(au.name) like lower(?) escape '\\'
+        ) or
+        exists (
+          select 1 from articles_people ap
+          inner join people p on p.id = ap.person_id
+          where ap.article_id = a.id and lower(p.name) like lower(?) escape '\\'
+        ) or
+        exists (
+          select 1 from articles_organizations ao
+          inner join organizations o on o.id = ao.organization_id
+          where ao.article_id = a.id and lower(o.name) like lower(?) escape '\\'
+        ) or
+        exists (
+          select 1 from articles_locations al
+          inner join locations l on l.id = al.location_id
+          where al.article_id = a.id and lower(l.name) like lower(?) escape '\\'
+        )
+      )''');
+      args.addAll([query, query, query, query, query, query, query]);
     }
     if (mediaType != null && mediaType.isNotEmpty) {
       where.add('m.type = ?');
@@ -341,12 +376,15 @@ class LocalDatabase {
       args.add(next.toIso8601String());
     }
     final whereSql = where.isEmpty ? '' : 'where ' + where.join(' and ');
+    final limitSql = limit != null ? 'limit $limit' : '';
+    final offsetSql = offset != null ? 'offset $offset' : '';
     final rows = await db.rawQuery('''
       select a.*, m.name as media_name, m.type as media_type
       from articles a
       left join media m on m.id = a.media_id
       $whereSql
       order by a.updated_at desc
+      $limitSql $offsetSql
     ''', args);
     return rows
         .map((r) => ArticleWithMedium(
@@ -634,6 +672,7 @@ class ArticleModel {
   String? description;
   String? excerpt;
   String? imagePath;
+  List<String>? tags;
   DateTime updatedAt;
   ArticleModel({
     required this.id,
@@ -646,6 +685,7 @@ class ArticleModel {
     this.description,
     this.excerpt,
     this.imagePath,
+    this.tags,
     DateTime? updatedAt,
   }) : updatedAt = updatedAt ?? DateTime.now();
 
@@ -660,6 +700,7 @@ class ArticleModel {
         'description': description,
         'excerpt': excerpt,
         'image_path': imagePath,
+        'tags': tags?.join(','),
         'updated_at': updatedAt.toIso8601String(),
       };
 
@@ -676,6 +717,7 @@ class ArticleModel {
         description: m['description'] as String?,
         excerpt: m['excerpt'] as String?,
         imagePath: m['image_path'] as String?,
+        tags: (m['tags'] as String?)?.split(',').where((t) => t.trim().isNotEmpty).toList(),
         updatedAt: DateTime.tryParse((m['updated_at'] as String?) ?? '') ??
             DateTime.now(),
       );
