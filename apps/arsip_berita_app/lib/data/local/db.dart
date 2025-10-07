@@ -50,7 +50,7 @@ class LocalDatabase {
     print('Database exists: $exists');
     _db = await openDatabase(
       path,
-      version: 7,
+      version: 8,
       onCreate: (db, v) async {
         await db.execute('''
           create table media (
@@ -69,6 +69,7 @@ class LocalDatabase {
             kind text,
             published_at text,
             description text,
+            description_delta text,
             excerpt text,
             image_path text,
             tags text,
@@ -222,6 +223,13 @@ class LocalDatabase {
         if (oldV < 7) {
           try {
             await db.execute('alter table articles add column tags text');
+          } catch (e) {
+            // ignore if column already exists
+          }
+        }
+        if (oldV < 8) {
+          try {
+            await db.execute('alter table articles add column description_delta text');
           } catch (e) {
             // ignore if column already exists
           }
@@ -670,6 +678,7 @@ class ArticleModel {
   String? kind; // 'artikel' or 'opini'
   DateTime? publishedAt;
   String? description;
+  String? descriptionDelta; // Delta JSON for rich text editor
   String? excerpt;
   String? imagePath;
   List<String>? tags;
@@ -683,6 +692,7 @@ class ArticleModel {
     this.kind,
     this.publishedAt,
     this.description,
+    this.descriptionDelta,
     this.excerpt,
     this.imagePath,
     this.tags,
@@ -698,6 +708,7 @@ class ArticleModel {
         'kind': kind,
         'published_at': publishedAt?.toIso8601String(),
         'description': description,
+        'description_delta': descriptionDelta,
         'excerpt': excerpt,
         'image_path': imagePath,
         'tags': tags?.join(','),
@@ -715,6 +726,7 @@ class ArticleModel {
             ? null
             : DateTime.tryParse(m['published_at'] as String),
         description: m['description'] as String?,
+        descriptionDelta: m['description_delta'] as String?,
         excerpt: m['excerpt'] as String?,
         imagePath: m['image_path'] as String?,
         tags: (m['tags'] as String?)?.split(',').where((t) => t.trim().isNotEmpty).toList(),

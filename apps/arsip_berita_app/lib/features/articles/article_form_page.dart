@@ -1,13 +1,12 @@
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
-import 'package:flutter/foundation.dart' show kIsWeb, listEquals, mapEquals;
+import 'package:flutter/foundation.dart' show kIsWeb, listEquals;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_quill/flutter_quill.dart';
 import 'package:flutter_quill_delta_from_html/flutter_quill_delta_from_html.dart';
-import 'package:dart_quill_delta/dart_quill_delta.dart' show Delta;
 
 import '../../data/local/db.dart';
 import '../../services/metadata_extractor.dart';
@@ -299,8 +298,13 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
         ? trimmed
         : '<p>${htmlEscape.convert(trimmed)}</p>';
     try {
-      // Use HtmlToDelta as fallback, but create custom Delta for better paragraph handling
-      final delta = _customHtmlToDelta(sanitized);
+      // Use HtmlToDelta converter to properly parse HTML with formatting
+      final converter = HtmlToDelta();
+      final delta = converter.convert(sanitized);
+
+      // Debug: check if delta has proper structure
+      debugPrint('Loaded delta: ${delta.toJson()}');
+
       final document = Document.fromDelta(delta);
       final widths = _extractImageWidths(trimmed);
       setState(() {
@@ -310,92 +314,6 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
       debugPrint('Gagal memuat HTML ke editor: $err');
       setState(_resetQuillDocument);
     }
-  }
-
-  Delta _customHtmlToDelta(String html) {
-    var delta = Delta();
-
-    // Simple regex-based parser for paragraph tags
-    // This ensures each <p> creates a proper line in Quill
-    final paragraphRegex = RegExp(r'<p[^>]*>(.*?)</p>', dotAll: true);
-    final matches = paragraphRegex.allMatches(html);
-
-    if (matches.isEmpty) {
-      // Fallback to standard converter
-      final converter = HtmlToDelta();
-      return converter.convert(html);
-    }
-
-    for (final match in matches) {
-      final content = match.group(1) ?? '';
-
-      // Handle empty paragraphs
-      if (content.trim().isEmpty || content == '&nbsp;' || content == '<br>' || content == '<br/>') {
-        delta.insert('\n');
-        continue;
-      }
-
-      // Check if paragraph contains an image
-      if (content.contains('<img')) {
-        // Extract src from img tag
-        final srcMatch = RegExp(r'src="([^"]+)"', caseSensitive: false).firstMatch(content) ??
-            RegExp(r"src='([^']+)'", caseSensitive: false).firstMatch(content);
-
-        if (srcMatch != null) {
-          final src = srcMatch.group(1) ?? '';
-
-          // Extract width if available
-          final widthMatch = RegExp(r'width="([0-9]+)"', caseSensitive: false).firstMatch(content) ??
-              RegExp(r"width='([0-9]+)'", caseSensitive: false).firstMatch(content);
-          final widthStr = widthMatch?.group(1);
-
-          // Insert image as BlockEmbed
-          delta.insert({
-            'image': src,
-          });
-          delta.insert('\n');
-
-          // Store width if available
-          if (widthStr != null) {
-            final width = double.tryParse(widthStr);
-            if (width != null) {
-              _imageWidths[src] = width;
-            }
-          }
-          continue;
-        }
-      }
-
-      // Parse inline content (basic support for common tags)
-      var text = content;
-
-      // Remove HTML tags but preserve text (simple approach)
-      text = _stripHtmlTags(text);
-
-      // Decode HTML entities
-      text = _decodeHtmlEntities(text);
-
-      // Insert the text followed by newline
-      delta.insert(text);
-      delta.insert('\n');
-    }
-
-    return delta;
-  }
-
-  String _stripHtmlTags(String html) {
-    // Simple tag stripper - preserves text content
-    return html.replaceAll(RegExp(r'<[^>]*>'), '');
-  }
-
-  String _decodeHtmlEntities(String text) {
-    return text
-        .replaceAll('&nbsp;', ' ')
-        .replaceAll('&amp;', '&')
-        .replaceAll('&lt;', '<')
-        .replaceAll('&gt;', '>')
-        .replaceAll('&quot;', '"')
-        .replaceAll('&#39;', "'");
   }
 
   void _applyDocument(Document document, {Map<String, double>? widths}) {
@@ -1038,6 +956,28 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
         ..addAll(a.tags ?? []);
     });
 
+    // Priority 1: Load from Delta JSON (preserves newlines perfectly)
+    final deltaJson = a.descriptionDelta?.trim();
+    if (deltaJson != null && deltaJson.isNotEmpty) {
+      try {
+        final deltaData = jsonDecode(deltaJson) as List<dynamic>;
+        final document = Document.fromJson(deltaData);
+
+        // Extract image widths from the stored HTML
+        final descText = a.description?.trim() ?? '';
+        final widths = _extractImageWidths(descText);
+
+        setState(() {
+          _applyDocument(document, widths: widths);
+        });
+        debugPrint('✅ Loaded from Delta JSON successfully');
+        return;
+      } catch (e) {
+        debugPrint('❌ Failed to load from Delta JSON: $e, falling back to HTML');
+      }
+    }
+
+    // Priority 2: Fallback to HTML (for old articles without Delta)
     final descText = a.description?.trim() ?? '';
     if (descText.isNotEmpty) {
       final processed = await convertLocalImagesToDataUri(descText);
@@ -1150,12 +1090,20 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
 
       await widget.db.init();
       String? descHtml;
+      String? descDelta;
       final document = _quillController.document;
       if (!_documentIsEffectivelyEmpty(document)) {
         final html = _documentToHtml(document).trim();
         if (html.isNotEmpty) {
           descHtml = html;
+          debugPrint('=== SAVING HTML ===');
+          debugPrint(html);
         }
+        // Save Delta JSON for accurate restore
+        final delta = document.toDelta();
+        descDelta = jsonEncode(delta.toJson());
+        debugPrint('=== SAVING DELTA ===');
+        debugPrint(descDelta);
       }
 
       int? mediaId;
@@ -1172,6 +1120,7 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
         mediaId: mediaId,
         kind: _kind,
         description: descHtml,
+        descriptionDelta: descDelta,
         excerpt: _excerpt.text.trim().isEmpty ? null : _excerpt.text.trim(),
         publishedAt: _date,
         imagePath: _isEditing ? widget.article!.imagePath : null,
@@ -1604,20 +1553,25 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
                 Divider(height: 1, thickness: 1, color: DS.border),
                 SizedBox(
                   height: _editorViewportHeight,
-                  child: QuillEditor(
-                    controller: _quillController,
-                    focusNode: _quillFocusNode,
-                    scrollController: _quillScrollController,
-                    config: QuillEditorConfig(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 16),
-                      placeholder: 'Tulis konten artikel di sini...',
-                      embedBuilders: [
-                        ImageEmbedBuilder(
-                          imageWidthsNotifier: _imageWidthsNotifier,
-                          defaultWidth: _defaultImageWidth,
+                  child: Stack(
+                    children: [
+                      QuillEditor(
+                        controller: _quillController,
+                        focusNode: _quillFocusNode,
+                        scrollController: _quillScrollController,
+                        config: QuillEditorConfig(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 16),
+                          placeholder: 'Tulis konten artikel di sini...',
+                          embedBuilders: [
+                            ImageEmbedBuilder(
+                              imageWidthsNotifier: _imageWidthsNotifier,
+                              defaultWidth: _defaultImageWidth,
+                            ),
+                          ],
                         ),
-                      ],
-                    ),
+                      ),
+                      _CustomSelectionToolbar(controller: _quillController),
+                    ],
                   ),
                 ),
               ],
@@ -2046,5 +2000,111 @@ class _CompactQuillToolbarState extends State<_CompactQuillToolbar> {
         ],
       ),
     );
+  }
+}
+
+
+class _CustomSelectionToolbar extends StatelessWidget {
+  final QuillController controller;
+
+  const _CustomSelectionToolbar({required this.controller});
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: controller,
+      builder: (context, child) {
+        final selection = controller.selection;
+        final hasSelection = !selection.isCollapsed;
+
+        if (!hasSelection) {
+          return const SizedBox.shrink();
+        }
+
+        return Positioned(
+          bottom: 60,
+          left: 16,
+          right: 16,
+          child: Center(
+            child: Material(
+              elevation: 4,
+              borderRadius: BorderRadius.circular(8),
+              color: Colors.white,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                child: Wrap(
+                  spacing: 4,
+                  children: [
+                    _buildButton(context, label: 'B', attribute: Attribute.bold),
+                    _buildButton(context, label: 'I', attribute: Attribute.italic),
+                    _buildButton(context, label: 'U', attribute: Attribute.underline),
+                    _buildButton(context, label: 'S', attribute: Attribute.strikeThrough),
+                    const SizedBox(width: 4),
+                    _buildTextButton(context, 'Cut', _handleCut),
+                    _buildTextButton(context, 'Copy', _handleCopy),
+                    _buildTextButton(context, 'Paste', _handlePaste),
+                    _buildTextButton(context, 'Select all', _handleSelectAll),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildButton(BuildContext context, {required String label, required Attribute attribute}) {
+    final style = controller.getSelectionStyle();
+    final isActive = style.containsKey(attribute.key);
+    return InkWell(
+      onTap: () => controller.formatSelection(isActive ? Attribute.clone(attribute, null) : attribute),
+      borderRadius: BorderRadius.circular(4),
+      child: Container(
+        padding: const EdgeInsets.all(8),
+        decoration: BoxDecoration(
+          color: isActive ? Colors.blue.shade100 : Colors.transparent,
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: Text(label, style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: isActive ? Colors.blue.shade700 : Colors.black87)),
+      ),
+    );
+  }
+
+  Widget _buildTextButton(BuildContext context, String label, VoidCallback onTap) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(4),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        child: Text(label, style: const TextStyle(fontSize: 14, color: Colors.black87)),
+      ),
+    );
+  }
+
+  void _handleCut() {
+    final selection = controller.selection;
+    final text = controller.document.toPlainText().substring(selection.baseOffset, selection.extentOffset);
+    Clipboard.setData(ClipboardData(text: text));
+    controller.replaceText(selection.baseOffset, selection.extentOffset - selection.baseOffset, '', TextSelection.collapsed(offset: selection.baseOffset));
+  }
+
+  void _handleCopy() {
+    final selection = controller.selection;
+    final text = controller.document.toPlainText().substring(selection.baseOffset, selection.extentOffset);
+    Clipboard.setData(ClipboardData(text: text));
+  }
+
+  void _handlePaste() async {
+    final data = await Clipboard.getData('text/plain');
+    if (data?.text != null) {
+      final selection = controller.selection;
+      controller.replaceText(selection.baseOffset, selection.extentOffset - selection.baseOffset, data!.text!, TextSelection.collapsed(offset: selection.baseOffset + data.text!.length));
+    }
+  }
+
+  void _handleSelectAll() {
+    final length = controller.document.length - 1;
+    controller.updateSelection(TextSelection(baseOffset: 0, extentOffset: length), ChangeSource.local);
   }
 }
