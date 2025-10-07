@@ -21,18 +21,29 @@ class _App extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     return AnimatedBuilder(
       animation: ThemeController.instance,
-      builder: (context, _) => MaterialApp(
-        title: 'Arsip Berita',
-        theme: AppTheme.build(),
-        localizationsDelegates: const [
-          GlobalMaterialLocalizations.delegate,
-          GlobalWidgetsLocalizations.delegate,
-          GlobalCupertinoLocalizations.delegate,
-          FlutterQuillLocalizations.delegate,
-        ],
-        supportedLocales: FlutterQuillLocalizations.supportedLocales,
-        home: const SplashPage(),
-      ),
+      builder: (context, _) {
+        return MaterialApp(
+          title: 'Arsip Berita',
+          theme: AppTheme.build(),
+          localizationsDelegates: const [
+            GlobalMaterialLocalizations.delegate,
+            GlobalWidgetsLocalizations.delegate,
+            GlobalCupertinoLocalizations.delegate,
+            FlutterQuillLocalizations.delegate,
+          ],
+          supportedLocales: FlutterQuillLocalizations.supportedLocales,
+          home: Builder(
+            builder: (context) {
+              // Update system brightness when available
+              final brightness = MediaQuery.of(context).platformBrightness;
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                ThemeController.instance.updateSystemBrightness(brightness);
+              });
+              return const SplashPage();
+            },
+          ),
+        );
+      },
     );
   }
 }

@@ -17,6 +17,8 @@ import '../../ui/theme_mode.dart';
 import 'article_form_page.dart';
 import 'article_detail_page.dart';
 
+enum _ThemeMode { light, dark, system }
+
 class ArticlesListPage extends StatefulWidget {
   const ArticlesListPage({super.key});
   @override
@@ -123,6 +125,17 @@ class _ArticlesListPageState extends State<ArticlesListPage> {
     });
   }
 
+  IconData _getThemeIcon() {
+    switch (ThemeController.instance.preference) {
+      case ThemePreference.light:
+        return Icons.light_mode_outlined;
+      case ThemePreference.dark:
+        return Icons.dark_mode_outlined;
+      case ThemePreference.system:
+        return Icons.brightness_auto_outlined;
+    }
+  }
+
   Widget _StatCard(
       {required String label,
       required String value,
@@ -157,7 +170,7 @@ class _ArticlesListPageState extends State<ArticlesListPage> {
               children: [
                 Text(
                   label,
-                  style: Theme.of(context).textTheme.bodySmall,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(color: DS.textDim),
                 ),
                 const SizedBox(height: 2),
                 Text(
@@ -165,7 +178,7 @@ class _ArticlesListPageState extends State<ArticlesListPage> {
                   style: Theme.of(context)
                       .textTheme
                       .titleMedium
-                      ?.copyWith(fontWeight: FontWeight.w600),
+                      ?.copyWith(fontWeight: FontWeight.w600, color: DS.text),
                 ),
               ],
             ),
@@ -501,6 +514,69 @@ class _ArticlesListPageState extends State<ArticlesListPage> {
             ],
           ),
           const SizedBox(width: Spacing.sm),
+          PopupMenuButton<_ThemeMode>(
+            tooltip: 'Tema',
+            icon: Icon(_getThemeIcon()),
+            onSelected: (value) {
+              final brightness = MediaQuery.of(context).platformBrightness;
+              switch (value) {
+                case _ThemeMode.light:
+                  ThemeController.instance.setThemePreference(
+                    ThemePreference.light,
+                    systemBrightness: brightness,
+                  );
+                  break;
+                case _ThemeMode.dark:
+                  ThemeController.instance.setThemePreference(
+                    ThemePreference.dark,
+                    systemBrightness: brightness,
+                  );
+                  break;
+                case _ThemeMode.system:
+                  ThemeController.instance.setThemePreference(
+                    ThemePreference.system,
+                    systemBrightness: brightness,
+                  );
+                  break;
+              }
+            },
+            itemBuilder: (context) => [
+              PopupMenuItem<_ThemeMode>(
+                value: _ThemeMode.light,
+                child: ListTile(
+                  dense: true,
+                  leading: const Icon(Icons.light_mode_outlined),
+                  title: const Text('Light Mode'),
+                  trailing: ThemeController.instance.preference == ThemePreference.light
+                      ? const Icon(Icons.check, size: 18)
+                      : null,
+                ),
+              ),
+              PopupMenuItem<_ThemeMode>(
+                value: _ThemeMode.dark,
+                child: ListTile(
+                  dense: true,
+                  leading: const Icon(Icons.dark_mode_outlined),
+                  title: const Text('Dark Mode'),
+                  trailing: ThemeController.instance.preference == ThemePreference.dark
+                      ? const Icon(Icons.check, size: 18)
+                      : null,
+                ),
+              ),
+              PopupMenuItem<_ThemeMode>(
+                value: _ThemeMode.system,
+                child: ListTile(
+                  dense: true,
+                  leading: const Icon(Icons.brightness_auto_outlined),
+                  title: const Text('System Default'),
+                  trailing: ThemeController.instance.preference == ThemePreference.system
+                      ? const Icon(Icons.check, size: 18)
+                      : null,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(width: Spacing.sm),
           UiButton(
               label: 'Tambah',
               icon: Icons.add,
@@ -564,6 +640,31 @@ class _ArticlesListPageState extends State<ArticlesListPage> {
                                       start: _startDate ??
                                           now.subtract(const Duration(days: 7)),
                                       end: _endDate ?? now),
+                          builder: (context, child) {
+                            return Theme(
+                              data: ThemeData(
+                                colorScheme: ThemeController.instance.isDark
+                                    ? ColorScheme.dark(
+                                        primary: DS.accent,
+                                        onPrimary: Colors.white,
+                                        surface: DS.surface,
+                                        onSurface: DS.text,
+                                      )
+                                    : ColorScheme.light(
+                                        primary: DS.accent,
+                                        onPrimary: Colors.white,
+                                        surface: DS.surface,
+                                        onSurface: DS.text,
+                                      ),
+                                textTheme: TextTheme(
+                                  bodyLarge: TextStyle(color: DS.text),
+                                  bodyMedium: TextStyle(color: DS.text),
+                                  labelLarge: TextStyle(color: DS.text),
+                                ),
+                              ),
+                              child: child!,
+                            );
+                          },
                         );
                         if (range != null) {
                           setState(() {
@@ -598,9 +699,9 @@ class _ArticlesListPageState extends State<ArticlesListPage> {
                                       _search();
                                     },
                                     borderRadius: BorderRadius.circular(10),
-                                    child: const Padding(
-                                      padding: EdgeInsets.all(4),
-                                      child: Icon(Icons.close, size: 18),
+                                    child: Padding(
+                                      padding: const EdgeInsets.all(4),
+                                      child: Icon(Icons.close, size: 18, color: DS.textDim),
                                     ),
                                   )
                                 : null,
@@ -649,6 +750,31 @@ class _ArticlesListPageState extends State<ArticlesListPage> {
                                       start: _startDate ??
                                           now.subtract(const Duration(days: 7)),
                                       end: _endDate ?? now),
+                          builder: (context, child) {
+                            return Theme(
+                              data: ThemeData(
+                                colorScheme: ThemeController.instance.isDark
+                                    ? ColorScheme.dark(
+                                        primary: DS.accent,
+                                        onPrimary: Colors.white,
+                                        surface: DS.surface,
+                                        onSurface: DS.text,
+                                      )
+                                    : ColorScheme.light(
+                                        primary: DS.accent,
+                                        onPrimary: Colors.white,
+                                        surface: DS.surface,
+                                        onSurface: DS.text,
+                                      ),
+                                textTheme: TextTheme(
+                                  bodyLarge: TextStyle(color: DS.text),
+                                  bodyMedium: TextStyle(color: DS.text),
+                                  labelLarge: TextStyle(color: DS.text),
+                                ),
+                              ),
+                              child: child!,
+                            );
+                          },
                         );
                         if (range != null) {
                           setState(() {
@@ -855,9 +981,9 @@ class _DateRangeInput extends StatelessWidget {
         ),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
         child: Row(children: [
-          const Icon(Icons.event),
+          Icon(Icons.event, color: DS.textDim),
           const SizedBox(width: 8),
-          Expanded(child: Text(label)),
+          Expanded(child: Text(label, style: TextStyle(color: hasValue ? DS.text : DS.textDim))),
           if (hasValue) ...[
             const SizedBox(width: 8),
             InkWell(
@@ -865,9 +991,9 @@ class _DateRangeInput extends StatelessWidget {
                 onClear();
               },
               borderRadius: BorderRadius.circular(10),
-              child: const Padding(
-                padding: EdgeInsets.all(4),
-                child: Icon(Icons.close, size: 18),
+              child: Padding(
+                padding: const EdgeInsets.all(4),
+                child: Icon(Icons.close, size: 18, color: DS.textDim),
               ),
             ),
           ],

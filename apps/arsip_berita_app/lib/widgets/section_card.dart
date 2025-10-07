@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../ui/theme.dart';
+import '../ui/design.dart';
 
 class SectionCard extends StatelessWidget {
   final String? title;
@@ -17,7 +18,7 @@ class SectionCard extends StatelessWidget {
               padding: const EdgeInsets.only(bottom: Spacing.md),
               child: Row(
                 children: [
-                  Expanded(child: Text(title!, style: Theme.of(context).textTheme.titleMedium)),
+                  Expanded(child: Text(title!, style: Theme.of(context).textTheme.titleMedium?.copyWith(color: DS.text))),
                   if (trailing != null) trailing!,
                 ],
               ),

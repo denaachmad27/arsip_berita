@@ -13,6 +13,7 @@ import '../../data/local/db.dart';
 import '../../services/metadata_extractor.dart';
 import '../../ui/design.dart';
 import '../../ui/theme.dart';
+import '../../ui/theme_mode.dart';
 import '../../util/platform_io.dart';
 import '../../widgets/page_container.dart';
 import '../../widgets/section_card.dart';
@@ -299,9 +300,61 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
         ? trimmed
         : '<p>${htmlEscape.convert(trimmed)}</p>';
     try {
-      // Use the standard HtmlToDelta converter to preserve all formatting
+      // CUSTOM HTML TO DELTA CONVERSION
+      // HtmlToDelta library FAILS to handle multiple <p> tags properly
+      // It merges them without newlines!
+
+      var delta = Delta();
       final converter = HtmlToDelta();
-      final delta = converter.convert(sanitized);
+
+      // Parse HTML and convert each <p> to a line with newline
+      final pTagRegex = RegExp(r'<p[^>]*>(.*?)</p>', dotAll: true);
+      final matches = pTagRegex.allMatches(sanitized);
+
+      if (matches.isEmpty) {
+        // Fallback if no <p> tags found
+        delta = converter.convert(sanitized);
+      } else {
+        for (final match in matches) {
+          final content = match.group(1) ?? '';
+
+          // Check if paragraph contains an image
+          if (content.contains('<img')) {
+            final imgMatch = RegExp(r'<img[^>]*src="([^"]+)"[^>]*>').firstMatch(content);
+            if (imgMatch != null) {
+              final src = imgMatch.group(1) ?? '';
+              delta.insert({'image': src});
+              delta.insert('\n');
+            }
+          } else if (content.trim() == '&nbsp;' || content.trim().isEmpty) {
+            // Empty paragraph
+            delta.insert('\n');
+          } else {
+            // Use HtmlToDelta for inline formatting (bold, italic, etc)
+            final inlineDelta = converter.convert(content);
+
+            // Add the inline content - check if it already has trailing newline
+            final ops = inlineDelta.toList();
+            var hasTrailingNewline = false;
+
+            for (var i = 0; i < ops.length; i++) {
+              final op = ops[i];
+              delta.insert(op.data, op.attributes);
+
+              // Check if last operation is a newline
+              if (i == ops.length - 1 && op.data == '\n') {
+                hasTrailingNewline = true;
+              }
+            }
+
+            // Only add newline if HtmlToDelta didn't add one
+            if (!hasTrailingNewline) {
+              delta.insert('\n');
+            }
+          }
+        }
+      }
+
       final document = Document.fromDelta(delta);
       final widths = _extractImageWidths(trimmed);
       setState(() {
@@ -733,20 +786,20 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
               style: Theme.of(context)
                   .textTheme
                   .titleMedium
-                  ?.copyWith(fontWeight: FontWeight.w600),
+                  ?.copyWith(fontWeight: FontWeight.w600, color: DS.text),
             ),
           ),
           Tooltip(
             message: 'Perkecil tinggi editor',
             child: IconButton(
-              icon: const Icon(Icons.unfold_less),
+              icon: Icon(Icons.unfold_less, color: DS.text),
               onPressed: () => _resizeEditorViewport(false),
             ),
           ),
           Tooltip(
             message: 'Perbesar tinggi editor',
             child: IconButton(
-              icon: const Icon(Icons.unfold_more),
+              icon: Icon(Icons.unfold_more, color: DS.text),
               onPressed: () => _resizeEditorViewport(true),
             ),
           ),
@@ -783,6 +836,8 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
                 child: DropdownButton<String>(
                   value: selected,
                   isExpanded: true,
+                  dropdownColor: DS.surface,
+                  style: TextStyle(color: DS.text),
                   items: _documentImages
                       .asMap()
                       .entries
@@ -791,6 +846,7 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
                             child: Text(
                               'Gambar ${entry.key + 1}',
                               overflow: TextOverflow.ellipsis,
+                              style: TextStyle(color: DS.text),
                             ),
                           ))
                       .toList(),
@@ -1192,6 +1248,7 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
     final shouldPop = await showDialog<bool>(
       context: context,
       builder: (context) => Dialog(
+        backgroundColor: DS.surface,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 420),
@@ -1237,6 +1294,7 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
                       child: TextButton(
                         onPressed: () => Navigator.of(context).pop(false),
                         style: TextButton.styleFrom(
+                          foregroundColor: DS.text,
                           padding: const EdgeInsets.symmetric(vertical: 14),
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(14),
@@ -1285,6 +1343,31 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
       firstDate: earliest,
       lastDate: DateTime(now.year + 1, 12, 31),
       initialDate: adjustedInitial,
+      builder: (context, child) {
+        return Theme(
+          data: ThemeData(
+            colorScheme: ThemeController.instance.isDark
+                ? ColorScheme.dark(
+                    primary: DS.accent,
+                    onPrimary: Colors.white,
+                    surface: DS.surface,
+                    onSurface: DS.text,
+                  )
+                : ColorScheme.light(
+                    primary: DS.accent,
+                    onPrimary: Colors.white,
+                    surface: DS.surface,
+                    onSurface: DS.text,
+                  ),
+            textTheme: TextTheme(
+              bodyLarge: TextStyle(color: DS.text),
+              bodyMedium: TextStyle(color: DS.text),
+              labelLarge: TextStyle(color: DS.text),
+            ),
+          ),
+          child: child!,
+        );
+      },
     );
     if (picked != null) {
       setState(() {
@@ -1394,9 +1477,9 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
             suffix: InkWell(
               onTap: _loading ? null : _extract,
               borderRadius: BorderRadius.circular(8),
-              child: const Padding(
-                padding: EdgeInsets.all(8),
-                child: Icon(Icons.auto_fix_high),
+              child: Padding(
+                padding: const EdgeInsets.all(8),
+                child: Icon(Icons.auto_fix_high, color: DS.text),
               ),
             ),
           ),
@@ -1454,22 +1537,23 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
                   child: Row(
                     children: [
-                      const Icon(Icons.calendar_today, size: 18),
+                      Icon(Icons.calendar_today, size: 18, color: DS.textDim),
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(
                           _date == null
                               ? 'Pilih tanggal'
                               : '${_date!.day.toString().padLeft(2, '0')}/${_date!.month.toString().padLeft(2, '0')}/${_date!.year}',
+                          style: TextStyle(color: _date == null ? DS.textDim : DS.text),
                         ),
                       ),
                       if (_date != null)
                         InkWell(
                           onTap: () => setState(() => _date = null),
                           borderRadius: BorderRadius.circular(10),
-                          child: const Padding(
-                            padding: EdgeInsets.all(4),
-                            child: Icon(Icons.close, size: 18),
+                          child: Padding(
+                            padding: const EdgeInsets.all(4),
+                            child: Icon(Icons.close, size: 18, color: DS.textDim),
                           ),
                         ),
                     ],
@@ -1526,6 +1610,22 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
                     config: QuillEditorConfig(
                       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 16),
                       placeholder: 'Tulis konten artikel di sini...',
+                      customStyles: DefaultStyles(
+                        paragraph: DefaultTextBlockStyle(
+                          TextStyle(color: DS.text),
+                          HorizontalSpacing(0, 0),
+                          VerticalSpacing(0, 0),
+                          VerticalSpacing(0, 0),
+                          null,
+                        ),
+                        placeHolder: DefaultTextBlockStyle(
+                          TextStyle(color: DS.textDim),
+                          HorizontalSpacing(0, 0),
+                          VerticalSpacing(0, 0),
+                          VerticalSpacing(0, 0),
+                          null,
+                        ),
+                      ),
                       embedBuilders: [
                         ImageEmbedBuilder(
                           imageWidthsNotifier: _imageWidthsNotifier,
@@ -1686,7 +1786,7 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
           style: Theme.of(context)
               .textTheme
               .bodySmall
-              ?.copyWith(fontWeight: FontWeight.w600),
+              ?.copyWith(fontWeight: FontWeight.w600, color: DS.text),
         ),
         const SizedBox(height: Spacing.xs),
         child,
