@@ -31,7 +31,6 @@ class UiInput extends StatelessWidget {
             Expanded(
               child: TextField(
                 controller: controller,
-                style: TextStyle(color: DS.text),
                 decoration: InputDecoration.collapsed(hintText: hint, hintStyle: TextStyle(color: DS.textDim)),
                 onSubmitted: onSubmitted,
                 onChanged: onChanged,

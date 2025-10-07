@@ -7,7 +7,6 @@ import '../../data/local/db.dart';
 import '../../widgets/page_container.dart';
 import '../../ui/theme.dart';
 import '../../ui/design.dart';
-import '../../ui/theme_mode.dart';
 import '../../widgets/ui_scaffold.dart';
 import '../../widgets/ui_card.dart';
 import '../../widgets/image_preview.dart';
@@ -102,15 +101,13 @@ class _ArticleDetailPageState extends State<ArticleDetailPage> {
   }
 
   Widget _compactTagChip(IconData icon, String label) {
-    final isDark = ThemeController.instance.isDark;
     return Chip(
-      avatar: Icon(icon, size: 16, color: isDark ? const Color(0xFF1F2937) : DS.text),
-      label: Text(label, style: TextStyle(color: isDark ? const Color(0xFF1F2937) : DS.text)),
-      backgroundColor: isDark ? const Color(0xFFD4A574) : DS.surface,
-      side: BorderSide(color: isDark ? const Color(0xFFD4A574) : DS.border),
+      avatar: Icon(icon, size: 16),
+      label: Text(label),
       materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       visualDensity: const VisualDensity(horizontal: -2, vertical: -3),
+      labelStyle: Theme.of(context).textTheme.bodySmall,
     );
   }
 
@@ -435,19 +432,7 @@ class _ArticleDetailPageState extends State<ArticleDetailPage> {
                 ],
                 if ((a.kind ?? '').isNotEmpty) ...[
                   const SizedBox(width: 12),
-                  Builder(
-                    builder: (context) {
-                      final isDark = ThemeController.instance.isDark;
-                      return Chip(
-                        label: Text(
-                          a.kind == 'opini' ? 'Opini' : 'Artikel',
-                          style: TextStyle(color: isDark ? const Color(0xFF1F2937) : DS.text)
-                        ),
-                        backgroundColor: isDark ? const Color(0xFFD4A574) : DS.surface,
-                        side: BorderSide(color: isDark ? const Color(0xFFD4A574) : DS.border),
-                      );
-                    }
-                  ),
+                  Chip(label: Text(a.kind == 'opini' ? 'Opini' : 'Artikel')),
                 ],
               ]),
 

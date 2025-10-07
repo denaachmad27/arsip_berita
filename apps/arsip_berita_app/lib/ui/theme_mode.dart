@@ -2,17 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'design.dart';
 
-enum ThemePreference {
-  light,
-  dark,
-  system,
-}
-
 class ThemeController extends ChangeNotifier {
   bool isDark = false;
-  ThemePreference preference = ThemePreference.system;
   static final ThemeController instance = ThemeController._();
-
   ThemeController._() {
     init();
   }
@@ -21,73 +13,17 @@ class ThemeController extends ChangeNotifier {
   Color? _baseAccent2;
 
   Future<void> init() async {
-    final prefs = await SharedPreferences.getInstance();
-    final savedPref = prefs.getString('theme_preference') ?? 'system';
-
-    switch (savedPref) {
-      case 'light':
-        preference = ThemePreference.light;
-        isDark = false;
-        break;
-      case 'dark':
-        preference = ThemePreference.dark;
-        isDark = true;
-        break;
-      case 'system':
-      default:
-        preference = ThemePreference.system;
-        isDark = _getSystemBrightness();
-        break;
-    }
-
+    isDark = false;
     _apply();
     notifyListeners();
-  }
-
-  bool _getSystemBrightness() {
-    // This will be updated when we get the actual brightness from the widget
-    return false;
-  }
-
-  Future<void> setThemePreference(ThemePreference pref, {Brightness? systemBrightness}) async {
-    preference = pref;
-
-    switch (pref) {
-      case ThemePreference.light:
-        isDark = false;
-        break;
-      case ThemePreference.dark:
-        isDark = true;
-        break;
-      case ThemePreference.system:
-        isDark = systemBrightness == Brightness.dark;
-        break;
-    }
-
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('theme_preference', pref.name);
-
-    _apply();
-    notifyListeners();
-  }
-
-  void updateSystemBrightness(Brightness brightness) {
-    if (preference == ThemePreference.system) {
-      final newIsDark = brightness == Brightness.dark;
-      if (newIsDark != isDark) {
-        isDark = newIsDark;
-        _apply();
-        notifyListeners();
-      }
-    }
   }
 
   void setDark(bool v) {
-    setThemePreference(v ? ThemePreference.dark : ThemePreference.light);
+    // Do nothing
   }
 
   void toggle() {
-    setDark(!isDark);
+    // Do nothing
   }
 
   void _apply() {
