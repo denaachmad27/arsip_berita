@@ -918,26 +918,28 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
       return html;
     }
 
-    _title.text = a.title;
-    _url.text = a.url;
-    _canonical = a.canonicalUrl;
-    _excerpt.text = a.excerpt ?? '';
-    _date = a.publishedAt;
-    _kind = a.kind ?? 'artikel';
-    _imagePath = a.imagePath;
-
     await widget.db.init();
-    if (a.mediaId != null) {
-      final m = await widget.db.getMediaById(a.mediaId!);
+    final article = await widget.db.getArticleById(a.id) ?? a;
+
+    _title.text = article.title;
+    _url.text = article.url;
+    _canonical = article.canonicalUrl;
+    _excerpt.text = article.excerpt ?? '';
+    _date = article.publishedAt;
+    _kind = article.kind ?? 'artikel';
+    _imagePath = article.imagePath;
+
+    if (article.mediaId != null) {
+      final m = await widget.db.getMediaById(article.mediaId!);
       if (m != null) {
         _mediaName.text = m.name;
         _mediaType = m.type;
       }
     }
-    final authors = await widget.db.authorsForArticle(a.id);
-    final people = await widget.db.peopleForArticle(a.id);
-    final orgs = await widget.db.orgsForArticle(a.id);
-    final locs = await widget.db.locationsForArticle(a.id);
+    final authors = await widget.db.authorsForArticle(article.id);
+    final people = await widget.db.peopleForArticle(article.id);
+    final orgs = await widget.db.orgsForArticle(article.id);
+    final locs = await widget.db.locationsForArticle(article.id);
     setState(() {
       _authorTags
         ..clear()
@@ -953,18 +955,18 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
         ..addAll(locs);
       _tags
         ..clear()
-        ..addAll(a.tags ?? []);
+        ..addAll(article.tags ?? []);
     });
 
     // Priority 1: Load from Delta JSON (preserves newlines perfectly)
-    final deltaJson = a.descriptionDelta?.trim();
+    final deltaJson = article.descriptionDelta?.trim();
     if (deltaJson != null && deltaJson.isNotEmpty) {
       try {
         final deltaData = jsonDecode(deltaJson) as List<dynamic>;
         final document = Document.fromJson(deltaData);
 
         // Extract image widths from the stored HTML
-        final descText = a.description?.trim() ?? '';
+        final descText = article.description?.trim() ?? '';
         final widths = _extractImageWidths(descText);
 
         setState(() {
@@ -978,7 +980,7 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
     }
 
     // Priority 2: Fallback to HTML (for old articles without Delta)
-    final descText = a.description?.trim() ?? '';
+    final descText = article.description?.trim() ?? '';
     if (descText.isNotEmpty) {
       final processed = await convertLocalImagesToDataUri(descText);
       await _loadHtmlIntoQuill(processed);

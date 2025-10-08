@@ -295,16 +295,17 @@ class _ArticleDetailPageState extends State<ArticleDetailPage> {
               if (latest != null && mounted) {
                 setState(() {
                   widget.article.title = latest.title;
-                  widget.article.url = latest.url;
-                  widget.article.canonicalUrl = latest.canonicalUrl;
-                  widget.article.mediaId = latest.mediaId;
-                  widget.article.kind = latest.kind;
-                  widget.article.publishedAt = latest.publishedAt;
-                  widget.article.description = latest.description;
-                  widget.article.excerpt = latest.excerpt;
-                  widget.article.imagePath = latest.imagePath;
-                  widget.article.tags = latest.tags;
-                  _tagsFuture = _loadTags();
+                    widget.article.url = latest.url;
+                    widget.article.canonicalUrl = latest.canonicalUrl;
+                    widget.article.mediaId = latest.mediaId;
+                    widget.article.kind = latest.kind;
+                    widget.article.publishedAt = latest.publishedAt;
+                    widget.article.descriptionDelta = latest.descriptionDelta;
+                    widget.article.description = latest.description;
+                    widget.article.excerpt = latest.excerpt;
+                    widget.article.imagePath = latest.imagePath;
+                    widget.article.tags = latest.tags;
+                    _tagsFuture = _loadTags();
                   _prepareDesc();
                 });
               }
