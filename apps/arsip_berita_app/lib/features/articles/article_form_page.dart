@@ -1913,6 +1913,22 @@ class _CompactQuillToolbarState extends State<_CompactQuillToolbar> {
     ];
 
     final row2Buttons = [
+      _buildToolbarButton(
+        icon: Icons.undo,
+        tooltip: 'Undo',
+        onPressed: () {
+          widget.controller.undo();
+          setState(() {}); // Rebuild to update button states
+        },
+      ),
+      _buildToolbarButton(
+        icon: Icons.redo,
+        tooltip: 'Redo',
+        onPressed: () {
+          widget.controller.redo();
+          setState(() {}); // Rebuild to update button states
+        },
+      ),
       _buildAttributeButton(
         attribute: Attribute.ul,
         icon: Icons.format_list_bulleted,
@@ -1923,16 +1939,6 @@ class _CompactQuillToolbarState extends State<_CompactQuillToolbar> {
         icon: Icons.format_list_numbered,
         tooltip: 'Numbered List',
       ),
-      _buildAttributeButton(
-        attribute: Attribute.h1,
-        icon: Icons.looks_one,
-        tooltip: 'Heading 1',
-      ),
-      _buildAttributeButton(
-        attribute: Attribute.h2,
-        icon: Icons.looks_two,
-        tooltip: 'Heading 2',
-      ),
       _buildToolbarButton(
         icon: _showAll ? Icons.expand_less : Icons.expand_more,
         tooltip: _showAll ? 'Sembunyikan' : 'Tampilkan semua',
@@ -1942,6 +1948,21 @@ class _CompactQuillToolbarState extends State<_CompactQuillToolbar> {
 
     final additionalButtons = _showAll
         ? [
+            _buildAttributeButton(
+              attribute: Attribute.h1,
+              icon: Icons.looks_one,
+              tooltip: 'Heading 1',
+            ),
+            _buildAttributeButton(
+              attribute: Attribute.h2,
+              icon: Icons.looks_two,
+              tooltip: 'Heading 2',
+            ),
+            _buildAttributeButton(
+              attribute: Attribute.h3,
+              icon: Icons.looks_3,
+              tooltip: 'Heading 3',
+            ),
             _buildAttributeButton(
               attribute: Attribute.inlineCode,
               icon: Icons.code,
@@ -1971,6 +1992,11 @@ class _CompactQuillToolbarState extends State<_CompactQuillToolbar> {
               attribute: Attribute.rightAlignment,
               icon: Icons.format_align_right,
               tooltip: 'Align Right',
+            ),
+            _buildAttributeButton(
+              attribute: Attribute.justifyAlignment,
+              icon: Icons.format_align_justify,
+              tooltip: 'Justify',
             ),
           ]
         : <Widget>[];
@@ -2035,17 +2061,17 @@ class _CustomSelectionToolbar extends StatelessWidget {
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 child: Wrap(
-                  spacing: 4,
+                  spacing: 8,
+                  runSpacing: 4,
+                  alignment: WrapAlignment.center,
                   children: [
                     _buildButton(context, label: 'B', attribute: Attribute.bold),
                     _buildButton(context, label: 'I', attribute: Attribute.italic),
                     _buildButton(context, label: 'U', attribute: Attribute.underline),
                     _buildButton(context, label: 'S', attribute: Attribute.strikeThrough),
-                    const SizedBox(width: 4),
-                    _buildTextButton(context, 'Cut', _handleCut),
-                    _buildTextButton(context, 'Copy', _handleCopy),
-                    _buildTextButton(context, 'Paste', _handlePaste),
-                    _buildTextButton(context, 'Select all', _handleSelectAll),
+                    Container(width: 1, height: 24, color: Colors.grey.shade300),
+                    _buildIconButton(context, Icons.undo, 'Undo', _handleUndo),
+                    _buildIconButton(context, Icons.redo, 'Redo', _handleRedo),
                   ],
                 ),
               ),
@@ -2059,54 +2085,80 @@ class _CustomSelectionToolbar extends StatelessWidget {
   Widget _buildButton(BuildContext context, {required String label, required Attribute attribute}) {
     final style = controller.getSelectionStyle();
     final isActive = style.containsKey(attribute.key);
+
+    // Tentukan style visual berdasarkan tipe attribute
+    TextStyle textStyle;
+    if (attribute == Attribute.bold) {
+      textStyle = TextStyle(
+        fontSize: 18,
+        fontWeight: FontWeight.w900,
+        color: isActive ? Colors.blue.shade700 : Colors.black87,
+      );
+    } else if (attribute == Attribute.italic) {
+      textStyle = TextStyle(
+        fontSize: 18,
+        fontWeight: FontWeight.w600,
+        fontStyle: FontStyle.italic,
+        color: isActive ? Colors.blue.shade700 : Colors.black87,
+      );
+    } else if (attribute == Attribute.underline) {
+      textStyle = TextStyle(
+        fontSize: 18,
+        fontWeight: FontWeight.w600,
+        decoration: TextDecoration.underline,
+        color: isActive ? Colors.blue.shade700 : Colors.black87,
+      );
+    } else if (attribute == Attribute.strikeThrough) {
+      textStyle = TextStyle(
+        fontSize: 18,
+        fontWeight: FontWeight.w600,
+        decoration: TextDecoration.lineThrough,
+        color: isActive ? Colors.blue.shade700 : Colors.black87,
+      );
+    } else {
+      textStyle = TextStyle(
+        fontSize: 18,
+        fontWeight: FontWeight.w600,
+        color: isActive ? Colors.blue.shade700 : Colors.black87,
+      );
+    }
+
     return InkWell(
       onTap: () => controller.formatSelection(isActive ? Attribute.clone(attribute, null) : attribute),
-      borderRadius: BorderRadius.circular(4),
+      borderRadius: BorderRadius.circular(6),
       child: Container(
-        padding: const EdgeInsets.all(8),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         decoration: BoxDecoration(
           color: isActive ? Colors.blue.shade100 : Colors.transparent,
-          borderRadius: BorderRadius.circular(4),
+          borderRadius: BorderRadius.circular(6),
         ),
-        child: Text(label, style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: isActive ? Colors.blue.shade700 : Colors.black87)),
+        child: Text(label, style: textStyle),
       ),
     );
   }
 
-  Widget _buildTextButton(BuildContext context, String label, VoidCallback onTap) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(4),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        child: Text(label, style: const TextStyle(fontSize: 14, color: Colors.black87)),
+  Widget _buildIconButton(BuildContext context, IconData icon, String tooltip, VoidCallback onTap) {
+    return Tooltip(
+      message: tooltip,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(6),
+        child: Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: Icon(icon, size: 20, color: Colors.black87),
+        ),
       ),
     );
   }
 
-  void _handleCut() {
-    final selection = controller.selection;
-    final text = controller.document.toPlainText().substring(selection.baseOffset, selection.extentOffset);
-    Clipboard.setData(ClipboardData(text: text));
-    controller.replaceText(selection.baseOffset, selection.extentOffset - selection.baseOffset, '', TextSelection.collapsed(offset: selection.baseOffset));
+  void _handleUndo() {
+    controller.undo();
   }
 
-  void _handleCopy() {
-    final selection = controller.selection;
-    final text = controller.document.toPlainText().substring(selection.baseOffset, selection.extentOffset);
-    Clipboard.setData(ClipboardData(text: text));
-  }
-
-  void _handlePaste() async {
-    final data = await Clipboard.getData('text/plain');
-    if (data?.text != null) {
-      final selection = controller.selection;
-      controller.replaceText(selection.baseOffset, selection.extentOffset - selection.baseOffset, data!.text!, TextSelection.collapsed(offset: selection.baseOffset + data.text!.length));
-    }
-  }
-
-  void _handleSelectAll() {
-    final length = controller.document.length - 1;
-    controller.updateSelection(TextSelection(baseOffset: 0, extentOffset: length), ChangeSource.local);
+  void _handleRedo() {
+    controller.redo();
   }
 }
