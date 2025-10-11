@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../util/platform_io.dart';
 import '../../data/backup/drive_backup_service.dart';
 import '../../data/local/db.dart';
+import '../../data/local/scheduled_backup_service.dart';
 import '../../data/export_service.dart';
 import '../../ui/theme.dart';
 import '../../widgets/page_container.dart';
@@ -13,9 +14,9 @@ import '../../widgets/ui_button.dart';
 import '../../widgets/ui_input.dart';
 import '../../widgets/ui_chip.dart';
 import '../../widgets/ui_list_item.dart';
-import '../../ui/theme_mode.dart';
 import 'article_form_page.dart';
 import 'article_detail_page.dart';
+import 'database_info_dialog.dart';
 
 class ArticlesListPage extends StatefulWidget {
   const ArticlesListPage({super.key});
@@ -23,11 +24,12 @@ class ArticlesListPage extends StatefulWidget {
   State<ArticlesListPage> createState() => _ArticlesListPageState();
 }
 
-enum _DriveAction { backup, restore }
+enum _DriveAction { backup, restore, databaseInfo }
 
 class _ArticlesListPageState extends State<ArticlesListPage> {
   final _db = LocalDatabase();
   final DriveBackupService _driveBackup = DriveBackupService();
+  late ScheduledBackupService _scheduledBackup;
   final _q = TextEditingController();
   final _scrollController = ScrollController();
   bool _driveBusy = false;
@@ -47,6 +49,7 @@ class _ArticlesListPageState extends State<ArticlesListPage> {
   @override
   void initState() {
     super.initState();
+    _scheduledBackup = ScheduledBackupService(_db);
     _q.addListener(_updateClearButton);
     _init();
   }
@@ -58,6 +61,7 @@ class _ArticlesListPageState extends State<ArticlesListPage> {
 
   Future<void> _init() async {
     await _db.init();
+    await _scheduledBackup.initialize();
     await _search();
   }
 
@@ -252,6 +256,24 @@ class _ArticlesListPageState extends State<ArticlesListPage> {
         await _search();
       },
     );
+  }
+
+  Future<void> _showDatabaseInfo() async {
+    final shouldRefresh = await showDialog<bool>(
+      context: context,
+      builder: (context) => DatabaseInfoDialog(db: _db),
+    );
+
+    // Jika user melakukan restore, reset semua filter dan refresh data
+    if (shouldRefresh == true && mounted) {
+      setState(() {
+        _mediaType = null;
+        _startDate = null;
+        _endDate = null;
+        _q.clear();
+      });
+      await _search();
+    }
   }
 
   Future<void> _runWithProgress({
@@ -456,6 +478,7 @@ class _ArticlesListPageState extends State<ArticlesListPage> {
   void dispose() {
     _q.dispose();
     _scrollController.dispose();
+    _scheduledBackup.dispose();
     unawaited(_driveBackup.dispose());
     super.dispose();
   }
@@ -478,6 +501,9 @@ class _ArticlesListPageState extends State<ArticlesListPage> {
                 case _DriveAction.restore:
                   _restoreFromDrive();
                   break;
+                case _DriveAction.databaseInfo:
+                  _showDatabaseInfo();
+                  break;
               }
             },
             enabled: !_driveBusy,
@@ -496,6 +522,15 @@ class _ArticlesListPageState extends State<ArticlesListPage> {
                   dense: true,
                   leading: Icon(Icons.cloud_download_outlined),
                   title: Text('Restore dari Google Drive'),
+                ),
+              ),
+              const PopupMenuDivider(),
+              PopupMenuItem<_DriveAction>(
+                value: _DriveAction.databaseInfo,
+                child: const ListTile(
+                  dense: true,
+                  leading: Icon(Icons.storage),
+                  title: Text('Informasi Database'),
                 ),
               ),
             ],

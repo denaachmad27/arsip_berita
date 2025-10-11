@@ -1572,7 +1572,10 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
                           ],
                         ),
                       ),
-                      _CustomSelectionToolbar(controller: _quillController),
+                      _CustomSelectionToolbar(
+                        controller: _quillController,
+                        scrollController: _quillScrollController,
+                      ),
                     ],
                   ),
                 ),
@@ -2032,58 +2035,195 @@ class _CompactQuillToolbarState extends State<_CompactQuillToolbar> {
 }
 
 
-class _CustomSelectionToolbar extends StatelessWidget {
+class _CustomSelectionToolbar extends StatefulWidget {
   final QuillController controller;
+  final ScrollController scrollController;
 
-  const _CustomSelectionToolbar({required this.controller});
+  const _CustomSelectionToolbar({
+    required this.controller,
+    required this.scrollController,
+  });
+
+  @override
+  State<_CustomSelectionToolbar> createState() => _CustomSelectionToolbarState();
+}
+
+class _CustomSelectionToolbarState extends State<_CustomSelectionToolbar> {
+  bool _isToolbarVisible = true;
+  Offset _toolbarPosition = Offset.zero;
+  bool _isDragging = false;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.scrollController.addListener(_updateToolbarPosition);
+    widget.controller.addListener(_updateToolbarPosition);
+  }
+
+  @override
+  void dispose() {
+    widget.scrollController.removeListener(_updateToolbarPosition);
+    widget.controller.removeListener(_updateToolbarPosition);
+    super.dispose();
+  }
+
+  void _updateToolbarPosition() {
+    if (!mounted) return;
+
+    final selection = widget.controller.selection;
+    if (selection.isCollapsed) {
+      if (!_isToolbarVisible) {
+        setState(() {
+          _isToolbarVisible = true;
+          _toolbarPosition = Offset.zero;
+        });
+      }
+      return;
+    }
+
+    // Cek apakah toolbar masih visible dalam viewport
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+
+      try {
+        // Get render box untuk menghitung posisi selection
+        final renderBox = context.findRenderObject() as RenderBox?;
+        if (renderBox != null && renderBox.hasSize) {
+          final scrollOffset = widget.scrollController.offset;
+
+          // Estimasi posisi selection berdasarkan scroll offset
+          // Jika scroll lebih dari 100px, anggap toolbar keluar dari view
+          final isOutOfView = scrollOffset > 100;
+
+          if (isOutOfView != !_isToolbarVisible) {
+            setState(() {
+              _isToolbarVisible = !isOutOfView;
+              if (!isOutOfView) {
+                _toolbarPosition = Offset.zero;
+              }
+            });
+          }
+        }
+      } catch (e) {
+        // Ignore error saat context belum ready
+      }
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: controller,
-      builder: (context, child) {
-        final selection = controller.selection;
-        final hasSelection = !selection.isCollapsed;
+    final selection = widget.controller.selection;
+    final hasSelection = !selection.isCollapsed;
 
-        if (!hasSelection) {
-          return const SizedBox.shrink();
-        }
+    if (!hasSelection) {
+      return const SizedBox.shrink();
+    }
 
-        return Positioned(
-          bottom: 60,
-          left: 16,
-          right: 16,
-          child: Center(
-            child: Material(
-              elevation: 4,
-              borderRadius: BorderRadius.circular(8),
-              color: Colors.white,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                child: Wrap(
-                  spacing: 8,
-                  runSpacing: 4,
-                  alignment: WrapAlignment.center,
-                  children: [
-                    _buildButton(context, label: 'B', attribute: Attribute.bold),
-                    _buildButton(context, label: 'I', attribute: Attribute.italic),
-                    _buildButton(context, label: 'U', attribute: Attribute.underline),
-                    _buildButton(context, label: 'S', attribute: Attribute.strikeThrough),
-                    Container(width: 1, height: 24, color: Colors.grey.shade300),
-                    _buildIconButton(context, Icons.undo, 'Undo', _handleUndo),
-                    _buildIconButton(context, Icons.redo, 'Redo', _handleRedo),
-                  ],
-                ),
+    // Gunakan Stack dengan positioning absolut untuk drag bebas
+    return Positioned.fill(
+      child: Stack(
+        children: [
+          Positioned(
+            left: _toolbarPosition.dx,
+            top: _isToolbarVisible
+                ? null
+                : 8 + _toolbarPosition.dy,
+            bottom: _isToolbarVisible
+                ? 60 + _toolbarPosition.dy
+                : null,
+            child: _buildToolbarContent(context),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildToolbarContent(BuildContext context) {
+    return Draggable<int>(
+      feedback: Material(
+        elevation: 8,
+        borderRadius: BorderRadius.circular(8),
+        color: Colors.white,
+        child: Opacity(
+          opacity: 0.9,
+          child: _buildToolbarUI(context),
+        ),
+      ),
+      childWhenDragging: Opacity(
+        opacity: 0.3,
+        child: _buildToolbarUI(context),
+      ),
+      onDragStarted: () {
+        setState(() {
+          _isDragging = true;
+        });
+      },
+      onDragEnd: (details) {
+        setState(() {
+          _isDragging = false;
+          // Update posisi toolbar ke posisi akhir drag
+          final renderBox = context.findRenderObject() as RenderBox?;
+          if (renderBox != null) {
+            final localPosition = renderBox.globalToLocal(details.offset);
+            _toolbarPosition = localPosition;
+          }
+        });
+      },
+      child: _buildToolbarUI(context),
+    );
+  }
+
+  Widget _buildToolbarUI(BuildContext context) {
+    return Material(
+      elevation: _isDragging ? 8 : 4,
+      borderRadius: BorderRadius.circular(8),
+      color: Colors.white,
+      child: IntrinsicWidth(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Drag handle
+            Container(
+              width: 40,
+              height: 4,
+              margin: const EdgeInsets.only(top: 6, bottom: 2),
+              decoration: BoxDecoration(
+                color: Colors.grey.shade400,
+                borderRadius: BorderRadius.circular(2),
               ),
             ),
-          ),
-        );
-      },
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _buildButton(context, label: 'B', attribute: Attribute.bold),
+                  const SizedBox(width: 8),
+                  _buildButton(context, label: 'I', attribute: Attribute.italic),
+                  const SizedBox(width: 8),
+                  _buildButton(context, label: 'U', attribute: Attribute.underline),
+                  const SizedBox(width: 8),
+                  _buildButton(context, label: 'S', attribute: Attribute.strikeThrough),
+                  Container(
+                    width: 1,
+                    height: 24,
+                    margin: const EdgeInsets.symmetric(horizontal: 8),
+                    color: Colors.grey.shade300,
+                  ),
+                  _buildIconButton(context, Icons.undo, 'Undo', _handleUndo),
+                  const SizedBox(width: 8),
+                  _buildIconButton(context, Icons.redo, 'Redo', _handleRedo),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
   Widget _buildButton(BuildContext context, {required String label, required Attribute attribute}) {
-    final style = controller.getSelectionStyle();
+    final style = widget.controller.getSelectionStyle();
     final isActive = style.containsKey(attribute.key);
 
     // Tentukan style visual berdasarkan tipe attribute
@@ -2124,7 +2264,7 @@ class _CustomSelectionToolbar extends StatelessWidget {
     }
 
     return InkWell(
-      onTap: () => controller.formatSelection(isActive ? Attribute.clone(attribute, null) : attribute),
+      onTap: () => widget.controller.formatSelection(isActive ? Attribute.clone(attribute, null) : attribute),
       borderRadius: BorderRadius.circular(6),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -2155,10 +2295,10 @@ class _CustomSelectionToolbar extends StatelessWidget {
   }
 
   void _handleUndo() {
-    controller.undo();
+    widget.controller.undo();
   }
 
   void _handleRedo() {
-    controller.redo();
+    widget.controller.redo();
   }
 }

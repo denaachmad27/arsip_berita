@@ -27,21 +27,40 @@ class _ArticleDetailPageState extends State<ArticleDetailPage> {
   String?
       _renderDesc; // processed HTML for rendering (e.g., local images -> data URIs)
   static const String _highlightStyle = 'background-color: #a5d6a7;';
+  ArticleModel? _fullArticle; // Article with full content loaded from DB
+  bool _loadingFullArticle = true;
 
   @override
   void initState() {
     super.initState();
+    // Load full article data (including description) from database
+    _loadFullArticle();
     // Kick off tag loading immediately; _loadTags will init DB as needed
     _tagsFuture = _loadTags();
-    _prepareDesc();
+  }
+
+  Future<void> _loadFullArticle() async {
+    await _db.init();
+    final fullArticle = await _db.getArticleById(widget.article.id);
+    if (mounted) {
+      setState(() {
+        _fullArticle = fullArticle ?? widget.article;
+        _loadingFullArticle = false;
+      });
+      await _prepareDesc();
+    }
   }
 
   Future<void> _prepareDesc() async {
-    final raw = widget.article.description;
+    // Use full article if loaded, otherwise use widget.article
+    final article = _fullArticle ?? widget.article;
+    final raw = article.description;
     if (raw == null || raw.trim().isEmpty) {
-      setState(() {
-        _renderDesc = null;
-      });
+      if (mounted) {
+        setState(() {
+          _renderDesc = null;
+        });
+      }
       return;
     }
     String html = raw;
@@ -83,11 +102,12 @@ class _ArticleDetailPageState extends State<ArticleDetailPage> {
       }
     } catch (_) {}
     html = _normalizeHighlightStyles(html);
-    widget.article.description = html;
-    if (mounted)
+    article.description = html;
+    if (mounted) {
       setState(() {
         _renderDesc = html;
       });
+    }
   }
 
   Future<(List<String>, List<String>, List<String>, List<String>)>
@@ -438,14 +458,30 @@ class _ArticleDetailPageState extends State<ArticleDetailPage> {
               ]),
 
               // canonical URL removed to avoid duplication with main URL
+              // Show loading indicator while full article is being loaded
+              if (_loadingFullArticle) ...[
+                const SizedBox(height: Spacing.md),
+                const Center(
+                  child: Padding(
+                    padding: EdgeInsets.all(24.0),
+                    child: Column(
+                      children: [
+                        CircularProgressIndicator(),
+                        SizedBox(height: 12),
+                        Text('Memuat konten artikel...', style: TextStyle(color: Colors.grey)),
+                      ],
+                    ),
+                  ),
+                ),
+              ]
               // Show excerpt only when there is no rich description to avoid duplication
-              if ((a.excerpt != null && a.excerpt!.trim().isNotEmpty) &&
+              else if ((a.excerpt != null && a.excerpt!.trim().isNotEmpty) &&
                   (_renderDesc == null || _renderDesc!.trim().isEmpty)) ...[
                 const SizedBox(height: Spacing.md),
                 // Render excerpt as plain text (usually short summary)
                 Text(a.excerpt!, style: TextStyle(color: DS.text)),
-              ],
-              if (_renderDesc != null && _renderDesc!.trim().isNotEmpty) ...[
+              ]
+              else if (_renderDesc != null && _renderDesc!.trim().isNotEmpty) ...[
                 const SizedBox(height: Spacing.md),
                 if (kIsWeb)
                   HtmlWidget(
