@@ -592,6 +592,21 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
         highlightStyles['background-color'] = value;
       }
     }
+
+    // Handle font size
+    final sizeAttr = style[Attribute.size.key]?.value;
+    if (sizeAttr != null) {
+      final sizeValue = sizeAttr.toString();
+      // Map Quill size values to CSS font sizes
+      if (sizeValue == 'small') {
+        highlightStyles['font-size'] = '0.75em';
+      } else if (sizeValue == 'large') {
+        highlightStyles['font-size'] = '1.5em';
+      } else if (sizeValue == 'huge') {
+        highlightStyles['font-size'] = '2em';
+      }
+    }
+
     if (highlightStyles.isNotEmpty) {
       final styleString =
           highlightStyles.entries.map((e) => '${e.key}: ${e.value}').join('; ');
@@ -1852,13 +1867,14 @@ class _CompactQuillToolbarState extends State<_CompactQuillToolbar> {
     required String tooltip,
     required VoidCallback onPressed,
     bool? isActive,
+    Color? activeColor,
   }) {
     return Tooltip(
       message: tooltip,
       child: IconButton(
         icon: Icon(icon, size: 20),
         onPressed: onPressed,
-        color: isActive == true ? DS.accent : DS.text,
+        color: isActive == true ? (activeColor ?? DS.accent) : DS.text,
         iconSize: 20,
         padding: const EdgeInsets.all(4),
         constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
@@ -1883,6 +1899,21 @@ class _CompactQuillToolbarState extends State<_CompactQuillToolbar> {
         setState(() {}); // Rebuild to update button state
       },
     );
+  }
+
+  void _applyTextColor(String color) {
+    widget.controller.formatSelection(ColorAttribute(color));
+    setState(() {});
+  }
+
+  void _applyBackgroundColor(String color) {
+    widget.controller.formatSelection(BackgroundAttribute(color));
+    setState(() {});
+  }
+
+  void _applyFontSize(String size) {
+    widget.controller.formatSelection(SizeAttribute(size));
+    setState(() {});
   }
 
   @override
@@ -1912,6 +1943,47 @@ class _CompactQuillToolbarState extends State<_CompactQuillToolbar> {
         icon: Icons.image_outlined,
         tooltip: 'Sisipkan gambar',
         onPressed: widget.onInsertImage,
+      ),
+      PopupMenuButton<String>(
+        tooltip: 'Warna Teks',
+        icon: const Icon(Icons.format_color_text, size: 20),
+        iconSize: 20,
+        padding: const EdgeInsets.all(4),
+        onSelected: _applyTextColor,
+        itemBuilder: (context) => [
+          const PopupMenuItem(value: '#000000', child: Row(children: [Icon(Icons.circle, color: Color(0xFF000000), size: 16), SizedBox(width: 8), Text('Hitam')])),
+          const PopupMenuItem(value: '#ff0000', child: Row(children: [Icon(Icons.circle, color: Color(0xFFFF0000), size: 16), SizedBox(width: 8), Text('Merah')])),
+          const PopupMenuItem(value: '#0000ff', child: Row(children: [Icon(Icons.circle, color: Color(0xFF0000FF), size: 16), SizedBox(width: 8), Text('Biru')])),
+          const PopupMenuItem(value: '#008000', child: Row(children: [Icon(Icons.circle, color: Color(0xFF008000), size: 16), SizedBox(width: 8), Text('Hijau')])),
+          const PopupMenuItem(value: '#ff8c00', child: Row(children: [Icon(Icons.circle, color: Color(0xFFFF8C00), size: 16), SizedBox(width: 8), Text('Orange')])),
+          const PopupMenuItem(value: '#800080', child: Row(children: [Icon(Icons.circle, color: Color(0xFF800080), size: 16), SizedBox(width: 8), Text('Ungu')])),
+        ],
+      ),
+      PopupMenuButton<String>(
+        tooltip: 'Highlight / Latar Belakang',
+        icon: const Icon(Icons.format_color_fill, size: 20),
+        iconSize: 20,
+        padding: const EdgeInsets.all(4),
+        onSelected: _applyBackgroundColor,
+        itemBuilder: (context) => [
+          const PopupMenuItem(value: '#fff59d', child: Row(children: [Icon(Icons.circle, color: Color(0xFFFFF59D), size: 16), SizedBox(width: 8), Text('Kuning')])),
+          const PopupMenuItem(value: '#a5d6a7', child: Row(children: [Icon(Icons.circle, color: Color(0xFFA5D6A7), size: 16), SizedBox(width: 8), Text('Hijau Muda')])),
+          const PopupMenuItem(value: '#ffccbc', child: Row(children: [Icon(Icons.circle, color: Color(0xFFFFCCBC), size: 16), SizedBox(width: 8), Text('Orange Muda')])),
+          const PopupMenuItem(value: '#b3e5fc', child: Row(children: [Icon(Icons.circle, color: Color(0xFFB3E5FC), size: 16), SizedBox(width: 8), Text('Biru Muda')])),
+          const PopupMenuItem(value: '#f8bbd0', child: Row(children: [Icon(Icons.circle, color: Color(0xFFF8BBD0), size: 16), SizedBox(width: 8), Text('Pink Muda')])),
+        ],
+      ),
+      PopupMenuButton<String>(
+        tooltip: 'Ukuran Font',
+        icon: const Icon(Icons.format_size, size: 20),
+        iconSize: 20,
+        padding: const EdgeInsets.all(4),
+        onSelected: _applyFontSize,
+        itemBuilder: (context) => [
+          const PopupMenuItem(value: 'small', child: Text('Kecil', style: TextStyle(fontSize: 12))),
+          const PopupMenuItem(value: 'large', child: Text('Sedang', style: TextStyle(fontSize: 16))),
+          const PopupMenuItem(value: 'huge', child: Text('Besar', style: TextStyle(fontSize: 20))),
+        ],
       ),
     ];
 

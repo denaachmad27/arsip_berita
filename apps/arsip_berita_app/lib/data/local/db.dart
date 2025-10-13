@@ -674,6 +674,26 @@ class LocalDatabase {
     ''', [articleId]);
     return rows.map((e) => e['name'] as String).toList();
   }
+
+  // Delete article and all its relations
+  Future<void> deleteArticle(String articleId) async {
+    final db = _db;
+    if (db == null) return;
+
+    final batch = db.batch();
+
+    // Delete all relations first
+    batch.delete('articles_authors', where: 'article_id = ?', whereArgs: [articleId]);
+    batch.delete('articles_people', where: 'article_id = ?', whereArgs: [articleId]);
+    batch.delete('articles_organizations', where: 'article_id = ?', whereArgs: [articleId]);
+    batch.delete('articles_locations', where: 'article_id = ?', whereArgs: [articleId]);
+
+    // Delete the article itself
+    batch.delete('articles', where: 'id = ?', whereArgs: [articleId]);
+
+    await batch.commit(noResult: true);
+    print('Article $articleId deleted successfully');
+  }
 }
 
 class MediaModel {

@@ -151,6 +151,290 @@ class _ArticleDetailPageState extends State<ArticleDetailPage> {
     return html;
   }
 
+  Future<void> _duplicateArticle() async {
+    final shouldDuplicate = await showDialog<bool>(
+      context: context,
+      builder: (context) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 420),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 32),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 76,
+                  height: 76,
+                  decoration: BoxDecoration(
+                    color: DS.accent.withValues(alpha: 0.12),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    Icons.content_copy,
+                    size: 36,
+                    color: DS.accent,
+                  ),
+                ),
+                const SizedBox(height: 20),
+                Text(
+                  'Duplikat Artikel?',
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.w600,
+                        color: DS.text,
+                      ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'Artikel ini akan diduplikat dengan judul "[Salinan] ${widget.article.title}". Anda dapat mengeditnya setelah duplikat dibuat.',
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: DS.textDim,
+                      ),
+                ),
+                const SizedBox(height: 28),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextButton(
+                        onPressed: () => Navigator.of(context).pop(false),
+                        style: TextButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                            side: BorderSide(color: DS.border),
+                          ),
+                        ),
+                        child: const Text('Batal'),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: ElevatedButton(
+                        onPressed: () => Navigator.of(context).pop(true),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: DS.accent,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                        ),
+                        child: const Text('Duplikat'),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    if (shouldDuplicate == true && mounted) {
+      try {
+        await _db.init();
+
+        // Load full article data including all relations
+        final original = await _db.getArticleById(widget.article.id);
+        if (original == null) {
+          throw Exception('Artikel tidak ditemukan');
+        }
+
+        // Get all relations
+        final authors = await _db.authorsForArticle(original.id);
+        final people = await _db.peopleForArticle(original.id);
+        final orgs = await _db.orgsForArticle(original.id);
+        final locs = await _db.locationsForArticle(original.id);
+
+        // Create new article with new ID
+        final newId = 'local-${DateTime.now().millisecondsSinceEpoch}';
+        final duplicated = ArticleModel(
+          id: newId,
+          title: '[Salinan] ${original.title}',
+          url: original.url,
+          canonicalUrl: null, // Clear canonical URL to avoid duplicates
+          mediaId: original.mediaId,
+          kind: original.kind,
+          publishedAt: original.publishedAt,
+          description: original.description,
+          descriptionDelta: original.descriptionDelta,
+          excerpt: original.excerpt,
+          imagePath: original.imagePath,
+          tags: original.tags,
+        );
+
+        // Save duplicated article
+        await _db.upsertArticle(duplicated);
+
+        // Duplicate all relations
+        final authorIds = <int>[];
+        for (final name in authors) {
+          authorIds.add(await _db.upsertAuthorByName(name));
+        }
+        await _db.setArticleAuthors(newId, authorIds);
+
+        final peopleIds = <int>[];
+        for (final name in people) {
+          peopleIds.add(await _db.upsertPersonByName(name));
+        }
+        await _db.setArticlePeople(newId, peopleIds);
+
+        final orgIds = <int>[];
+        for (final name in orgs) {
+          orgIds.add(await _db.upsertOrganizationByName(name));
+        }
+        await _db.setArticleOrganizations(newId, orgIds);
+
+        final locIds = <int>[];
+        for (final name in locs) {
+          locIds.add(await _db.upsertLocationByName(name));
+        }
+        await _db.setArticleLocations(newId, locIds);
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Artikel berhasil diduplikat'),
+              backgroundColor: Colors.green,
+              duration: Duration(seconds: 2),
+            ),
+          );
+
+          // Navigate back to list
+          Navigator.of(context).pop(true);
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Gagal menduplikat artikel: ${e.toString()}'),
+              backgroundColor: Colors.red,
+              duration: const Duration(seconds: 4),
+            ),
+          );
+        }
+      }
+    }
+  }
+
+  Future<void> _deleteArticle() async {
+    final shouldDelete = await showDialog<bool>(
+      context: context,
+      builder: (context) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 420),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 32),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 76,
+                  height: 76,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFEF4444).withValues(alpha: 0.12),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.delete_outline,
+                    size: 36,
+                    color: Color(0xFFEF4444),
+                  ),
+                ),
+                const SizedBox(height: 20),
+                Text(
+                  'Hapus Artikel?',
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.w600,
+                        color: DS.text,
+                      ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'Artikel "${widget.article.title}" akan dihapus secara permanen. Tindakan ini tidak dapat dibatalkan.',
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: DS.textDim,
+                      ),
+                ),
+                const SizedBox(height: 28),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextButton(
+                        onPressed: () => Navigator.of(context).pop(false),
+                        style: TextButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                            side: BorderSide(color: DS.border),
+                          ),
+                        ),
+                        child: const Text('Batal'),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: ElevatedButton(
+                        onPressed: () => Navigator.of(context).pop(true),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFFEF4444),
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                        ),
+                        child: const Text('Hapus'),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    if (shouldDelete == true && mounted) {
+      try {
+        await _db.init();
+
+        // Delete the article and all its relations
+        await _db.deleteArticle(widget.article.id);
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Artikel berhasil dihapus'),
+              backgroundColor: Colors.green,
+              duration: Duration(seconds: 2),
+            ),
+          );
+
+          // Navigate back to list
+          Navigator.of(context).pop(true);
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Gagal menghapus artikel: ${e.toString()}'),
+              backgroundColor: Colors.red,
+              duration: const Duration(seconds: 4),
+            ),
+          );
+        }
+      }
+    }
+  }
+
   Future<void> _openUrl(String urlString) async {
     final shouldOpen = await showDialog<bool>(
       context: context,
@@ -303,6 +587,16 @@ class _ArticleDetailPageState extends State<ArticleDetailPage> {
       body: UiScaffold(
         title: 'Detail Artikel',
         actions: [
+          IconButton(
+            tooltip: 'Duplikat',
+            onPressed: () => _duplicateArticle(),
+            icon: const Icon(Icons.content_copy),
+          ),
+          IconButton(
+            tooltip: 'Hapus',
+            onPressed: () => _deleteArticle(),
+            icon: const Icon(Icons.delete),
+          ),
           IconButton(
             tooltip: 'Edit',
             onPressed: () async {
