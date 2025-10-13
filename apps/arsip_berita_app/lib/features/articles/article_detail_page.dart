@@ -313,21 +313,28 @@ class _ArticleDetailPageState extends State<ArticleDetailPage> {
               // reload article and tags after editing
               final latest = await _db.getArticleById(a.id);
               if (latest != null && mounted) {
+                // Update widget.article with latest data
+                widget.article.title = latest.title;
+                widget.article.url = latest.url;
+                widget.article.canonicalUrl = latest.canonicalUrl;
+                widget.article.mediaId = latest.mediaId;
+                widget.article.kind = latest.kind;
+                widget.article.publishedAt = latest.publishedAt;
+                widget.article.descriptionDelta = latest.descriptionDelta;
+                widget.article.description = latest.description;
+                widget.article.excerpt = latest.excerpt;
+                widget.article.imagePath = latest.imagePath;
+                widget.article.tags = latest.tags;
+
+                // Update _fullArticle to trigger content refresh
+                _fullArticle = latest;
+
                 setState(() {
-                  widget.article.title = latest.title;
-                    widget.article.url = latest.url;
-                    widget.article.canonicalUrl = latest.canonicalUrl;
-                    widget.article.mediaId = latest.mediaId;
-                    widget.article.kind = latest.kind;
-                    widget.article.publishedAt = latest.publishedAt;
-                    widget.article.descriptionDelta = latest.descriptionDelta;
-                    widget.article.description = latest.description;
-                    widget.article.excerpt = latest.excerpt;
-                    widget.article.imagePath = latest.imagePath;
-                    widget.article.tags = latest.tags;
-                    _tagsFuture = _loadTags();
-                  _prepareDesc();
+                  _tagsFuture = _loadTags();
                 });
+
+                // Await prepareDesc to ensure HTML content is updated before rebuild
+                await _prepareDesc();
               }
             },
             icon: const Icon(Icons.edit),
