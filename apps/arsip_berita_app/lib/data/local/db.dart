@@ -248,6 +248,22 @@ class LocalDatabase {
   Future<void> upsertArticle(ArticleModel a) async {
     final db = _db;
     if (db == null) return;
+
+    // Validate data size before inserting to prevent "Row too big" error
+    final descriptionSize = (a.description ?? '').length;
+    final deltaSize = (a.descriptionDelta ?? '').length;
+    const maxSize = 1800000; // 1.8MB, leave buffer under 2MB CursorWindow limit
+
+    if (descriptionSize > maxSize) {
+      print('WARNING: Article ${a.id} has oversized description: $descriptionSize bytes (max: $maxSize bytes)');
+      throw Exception('Article description too large: $descriptionSize bytes (max: $maxSize bytes). Please reduce content size or save images as separate files.');
+    }
+
+    if (deltaSize > maxSize) {
+      print('WARNING: Article ${a.id} has oversized delta: $deltaSize bytes (max: $maxSize bytes)');
+      throw Exception('Article delta content too large: $deltaSize bytes (max: $maxSize bytes). Please reduce content size or save images as separate files.');
+    }
+
     final data = a.toMap()..['updated_at'] = DateTime.now().toIso8601String();
     print('Upserting article: $data');
     await db.insert('articles', data,
@@ -270,10 +286,46 @@ class LocalDatabase {
   Future<ArticleModel?> getArticleById(String id) async {
     final db = _db;
     if (db == null) return null;
-    final rows =
-        await db.query('articles', where: 'id = ?', whereArgs: [id], limit: 1);
-    if (rows.isEmpty) return null;
-    return ArticleModel.fromMap(rows.first);
+    try {
+      final rows =
+          await db.query('articles', where: 'id = ?', whereArgs: [id], limit: 1);
+      if (rows.isEmpty) return null;
+      return ArticleModel.fromMap(rows.first);
+    } catch (e) {
+      // Handle "Row too big to fit into CursorWindow" error
+      print('ERROR: Failed to load article $id: $e');
+      print('Attempting to load without description fields...');
+
+      // Try to load without description and description_delta fields
+      try {
+        final rows = await db.query('articles',
+            columns: [
+              'id',
+              'title',
+              'url',
+              'canonical_url',
+              'media_id',
+              'kind',
+              'published_at',
+              'excerpt',
+              'image_path',
+              'tags',
+              'updated_at'
+            ],
+            where: 'id = ?',
+            whereArgs: [id],
+            limit: 1);
+        if (rows.isEmpty) return null;
+
+        // Return article without description content
+        final article = ArticleModel.fromMap(rows.first);
+        print('Article $id loaded without description fields (article may have oversized content)');
+        return article;
+      } catch (e2) {
+        print('ERROR: Failed to load article $id even without description fields: $e2');
+        return null;
+      }
+    }
   }
 
   Future<List<ArticleWithMedium>> searchArticles(
@@ -333,32 +385,40 @@ class LocalDatabase {
       where.add('(a.published_at < ?)');
       args.add(next.toIso8601String());
     }
-    final whereSql = where.isEmpty ? '' : 'where ' + where.join(' and ');
+    final whereSql = where.isEmpty ? '' : 'where ${where.join(' and ')}';
     final limitSql = limit != null ? 'limit $limit' : '';
     final offsetSql = offset != null ? 'offset $offset' : '';
-    final rows = await db.rawQuery('''
-      select
-        a.id, a.title, a.url, a.canonical_url, a.media_id,
-        a.kind, a.published_at, a.excerpt, a.image_path,
-        a.tags, a.updated_at,
-        m.name as media_name, m.type as media_type
-      from articles a
-      left join media m on m.id = a.media_id
-      $whereSql
-      order by a.updated_at desc
-      $limitSql $offsetSql
-    ''', args);
-    return rows
-        .map((r) => ArticleWithMedium(
-              ArticleModel.fromMap(r),
-              r['media_name'] == null
-                  ? null
-                  : MediaModel(
-                      id: (r['media_id'] as int?) ?? 0,
-                      name: r['media_name'] as String,
-                      type: r['media_type'] as String),
-            ))
-        .toList();
+
+    try {
+      // NOTE: This query intentionally excludes 'description' and 'description_delta'
+      // fields to avoid "Row too big" errors when listing articles
+      final rows = await db.rawQuery('''
+        select
+          a.id, a.title, a.url, a.canonical_url, a.media_id,
+          a.kind, a.published_at, a.excerpt, a.image_path,
+          a.tags, a.updated_at,
+          m.name as media_name, m.type as media_type
+        from articles a
+        left join media m on m.id = a.media_id
+        $whereSql
+        order by a.updated_at desc
+        $limitSql $offsetSql
+      ''', args);
+      return rows
+          .map((r) => ArticleWithMedium(
+                ArticleModel.fromMap(r),
+                r['media_name'] == null
+                    ? null
+                    : MediaModel(
+                        id: (r['media_id'] as int?) ?? 0,
+                        name: r['media_name'] as String,
+                        type: r['media_type'] as String),
+              ))
+          .toList();
+    } catch (e) {
+      print('ERROR: Failed to search articles: $e');
+      return [];
+    }
   }
 
   Future<bool> existsByCanonicalUrl(String canonicalUrl) async {
