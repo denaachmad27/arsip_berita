@@ -584,10 +584,14 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
         '#fff59d',
         '#fff9c4',
         '#a5d6a7',
+        '#ffccbc',
+        '#b3e5fc',
+        '#f8bbd0',
       };
       if (highlightCandidates.contains(value.toLowerCase())) {
+        // Preserve the actual color instead of converting to one color
         text =
-            '<mark data-highlight="true" style="background-color: #a5d6a7;">$text</mark>';
+            '<mark data-highlight="true" style="background-color: $value;">$text</mark>';
       } else {
         highlightStyles['background-color'] = value;
       }

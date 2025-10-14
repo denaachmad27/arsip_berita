@@ -26,7 +26,6 @@ class _ArticleDetailPageState extends State<ArticleDetailPage> {
   Future<(List<String>, List<String>, List<String>, List<String>)>? _tagsFuture;
   String?
       _renderDesc; // processed HTML for rendering (e.g., local images -> data URIs)
-  static const String _highlightStyle = 'background-color: #a5d6a7;';
   ArticleModel? _fullArticle; // Article with full content loaded from DB
   bool _loadingFullArticle = true;
 
@@ -101,7 +100,7 @@ class _ArticleDetailPageState extends State<ArticleDetailPage> {
         } catch (_) {}
       }
     } catch (_) {}
-    html = _normalizeHighlightStyles(html);
+    // Don't normalize highlight styles - preserve original colors
     article.description = html;
     if (mounted) {
       setState(() {
@@ -131,25 +130,6 @@ class _ArticleDetailPageState extends State<ArticleDetailPage> {
     );
   }
 
-  String _normalizeHighlightStyles(String html) {
-    final regex = RegExp(
-        r'(<mark[^>]*data-highlight="true"[^>]*style=")([^"]*)(")',
-        caseSensitive: false);
-    final singleQuoteRegex = RegExp(
-        r"(<mark[^>]*data-highlight='true'[^>]*style=')([^']*)(')",
-        caseSensitive: false);
-    html = html.replaceAllMapped(
-        regex, (m) => '${m.group(1)}$_highlightStyle${m.group(3)}');
-    html = html.replaceAllMapped(
-        singleQuoteRegex, (m) => '${m.group(1)}$_highlightStyle${m.group(3)}');
-    html = html.replaceAll(
-        RegExp(r'background-color:\s*#fff59d;?', caseSensitive: false),
-        _highlightStyle);
-    html = html.replaceAll(
-        RegExp(r'background-color:\s*#fff9c4;?', caseSensitive: false),
-        _highlightStyle);
-    return html;
-  }
 
   Future<void> _duplicateArticle() async {
     final shouldDuplicate = await showDialog<bool>(
