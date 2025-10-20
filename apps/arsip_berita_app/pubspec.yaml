@@ -3,7 +3,7 @@ description: Arsip Berita App (Flutter + Supabase, offline-first)
 publish_to: 'none'
 # Bump version for new release
 # Format: version: [major.minor.patch]+[build_number]
-version: 1.7.1+19
+version: 1.8.0+20
 
 environment:
   sdk: '>=3.4.0 <4.0.0'

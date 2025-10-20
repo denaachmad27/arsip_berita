@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:http/http.dart' as http;
@@ -31,12 +32,20 @@ class ExtractedMetadata {
   final String? description;
   final String? excerpt;
   final String? fullContent;
+  final String? mediaName;
+  final DateTime? publishedDate;
+  final String? coverImageUrl;
+  final Uint8List? coverImageBytes;
   ExtractedMetadata({
     this.canonicalUrl,
     this.title,
     this.description,
     this.excerpt,
     this.fullContent,
+    this.mediaName,
+    this.publishedDate,
+    this.coverImageUrl,
+    this.coverImageBytes,
   });
 }
 
@@ -131,7 +140,7 @@ class MetadataExtractor {
       }
     }
 
-    final result = _extract(doc, res.request?.url.toString() ?? fixedUrl);
+    final result = await _extract(doc, res.request?.url.toString() ?? fixedUrl);
 
     // If extraction failed and page is JS-rendered, add special marker
     if (isPossiblyJSRendered && (result.fullContent == null || result.fullContent!.isEmpty)) {
@@ -141,13 +150,17 @@ class MetadataExtractor {
         description: result.description,
         excerpt: result.excerpt,
         fullContent: '__JS_RENDERED_PAGE__', // Special marker
+        mediaName: result.mediaName,
+        publishedDate: result.publishedDate,
+        coverImageUrl: result.coverImageUrl,
+        coverImageBytes: result.coverImageBytes,
       );
     }
 
     return result;
   }
 
-  ExtractedMetadata _extract(dom.Document doc, String baseUrl) {
+  Future<ExtractedMetadata> _extract(dom.Document doc, String baseUrl) async {
     String? getMeta(String selector) => doc.querySelector(selector)?.attributes['content'];
     final title = getMeta('meta[property="og:title"]') ?? getMeta('meta[name="twitter:title"]') ?? doc.querySelector('title')?.text;
     final description = getMeta('meta[property="og:description"]') ?? getMeta('meta[name="description"]');
@@ -159,12 +172,29 @@ class MetadataExtractor {
     // Extract full article content
     final fullContent = _extractArticleContent(doc, baseUrl);
 
+    // Extract media name
+    final mediaName = _extractMediaName(doc, baseUrl);
+
+    // Extract published date
+    final publishedDate = _extractPublishedDate(doc);
+
+    // Extract cover image
+    final coverImageUrl = _extractCoverImageUrl(doc, baseUrl);
+    Uint8List? coverImageBytes;
+    if (coverImageUrl != null) {
+      coverImageBytes = await _downloadImage(coverImageUrl);
+    }
+
     return ExtractedMetadata(
       canonicalUrl: canonAbs != null ? normalizeUrl(canonAbs) : null,
       title: title,
       description: description,
       excerpt: excerpt.isEmpty ? null : excerpt,
       fullContent: fullContent,
+      mediaName: mediaName,
+      publishedDate: publishedDate,
+      coverImageUrl: coverImageUrl,
+      coverImageBytes: coverImageBytes,
     );
   }
 
@@ -499,8 +529,23 @@ class MetadataExtractor {
             buffer.write('</blockquote>');
           }
         } else if (tagName == 'img') {
-          // Skip all images - tidak mengekstrak gambar
-          continue;
+          // Extract images (with ad filtering)
+          if (!_isLikelyAdImage(node)) {
+            final src = node.attributes['src'] ?? node.attributes['data-src'];
+            if (src != null && src.trim().isNotEmpty) {
+              try {
+                final absoluteUrl = Uri.parse(baseUrl).resolve(src.trim()).toString();
+                final alt = node.attributes['alt'] ?? '';
+                buffer.write('<img src="${_escapeHtml(absoluteUrl)}"');
+                if (alt.isNotEmpty) {
+                  buffer.write(' alt="${_escapeHtml(alt)}"');
+                }
+                buffer.write(' />');
+              } catch (e) {
+                debugPrint('⚠️ Failed to process image: $src');
+              }
+            }
+          }
         } else {
           // Recursively process child elements
           _processElement(node, buffer, baseUrl);
@@ -590,6 +635,337 @@ class MetadataExtractor {
         .replaceAll('>', '&gt;')
         .replaceAll('"', '&quot;')
         .replaceAll("'", '&#39;');
+  }
+
+  String? _extractMediaName(dom.Document doc, String baseUrl) {
+    // Try to get media name from various meta tags
+    String? getMeta(String selector) => doc.querySelector(selector)?.attributes['content'];
+
+    // Priority 1: og:site_name (most reliable)
+    var mediaName = getMeta('meta[property="og:site_name"]');
+    if (mediaName != null && mediaName.trim().isNotEmpty) {
+      debugPrint('📰 Media name from og:site_name: $mediaName');
+      return mediaName.trim();
+    }
+
+    // Priority 2: twitter:site (without @ symbol)
+    mediaName = getMeta('meta[name="twitter:site"]');
+    if (mediaName != null && mediaName.trim().isNotEmpty) {
+      // Remove @ symbol if present
+      mediaName = mediaName.trim().replaceFirst(RegExp(r'^@'), '');
+      debugPrint('📰 Media name from twitter:site: $mediaName');
+      return mediaName;
+    }
+
+    // Priority 3: application-name
+    mediaName = getMeta('meta[name="application-name"]');
+    if (mediaName != null && mediaName.trim().isNotEmpty) {
+      debugPrint('📰 Media name from application-name: $mediaName');
+      return mediaName.trim();
+    }
+
+    // Priority 4: Extract from domain name as fallback
+    try {
+      final uri = Uri.parse(baseUrl);
+      var domain = uri.host;
+
+      // Remove 'www.' prefix
+      domain = domain.replaceFirst(RegExp(r'^www\.'), '');
+
+      // Remove TLDs (.com, .co.id, etc.)
+      domain = domain.replaceFirst(RegExp(r'\.(com|co\.id|id|net|org|tv)$'), '');
+
+      // Capitalize first letter
+      if (domain.isNotEmpty) {
+        domain = domain[0].toUpperCase() + domain.substring(1);
+        debugPrint('📰 Media name from domain: $domain');
+        return domain;
+      }
+    } catch (e) {
+      debugPrint('❌ Failed to extract media name from domain: $e');
+    }
+
+    return null;
+  }
+
+  DateTime? _extractPublishedDate(dom.Document doc) {
+    String? getMeta(String selector) => doc.querySelector(selector)?.attributes['content'];
+
+    // Try various meta tags for published date
+    final dateSelectors = [
+      'meta[property="article:published_time"]',
+      'meta[name="article:published_time"]',
+      'meta[property="datePublished"]',
+      'meta[name="datePublished"]',
+      'meta[property="publishdate"]',
+      'meta[name="publishdate"]',
+      'meta[property="publish-date"]',
+      'meta[name="publish-date"]',
+      'meta[name="date"]',
+      'meta[property="og:published_time"]',
+      'meta[name="publication_date"]',
+      'meta[name="DC.date.issued"]',
+      'time[itemprop="datePublished"]',
+    ];
+
+    for (final selector in dateSelectors) {
+      String? dateStr;
+
+      if (selector.startsWith('time[')) {
+        // For <time> elements, try datetime attribute first
+        final timeElement = doc.querySelector(selector);
+        dateStr = timeElement?.attributes['datetime'] ?? timeElement?.text;
+      } else {
+        dateStr = getMeta(selector);
+      }
+
+      if (dateStr != null && dateStr.trim().isNotEmpty) {
+        try {
+          final date = DateTime.parse(dateStr.trim());
+          debugPrint('📅 Published date from $selector: $date');
+          return date;
+        } catch (e) {
+          debugPrint('⚠️ Failed to parse date from $selector: $dateStr');
+          continue;
+        }
+      }
+    }
+
+    // Try schema.org JSON-LD
+    try {
+      final scripts = doc.querySelectorAll('script[type="application/ld+json"]');
+      for (final script in scripts) {
+        final jsonText = script.text;
+        if (jsonText.isEmpty) continue;
+
+        try {
+          final dynamic jsonData = jsonDecode(jsonText);
+
+          // Handle both single object and array of objects
+          final List<dynamic> items = jsonData is List ? jsonData : [jsonData];
+
+          for (final item in items) {
+            if (item is! Map<String, dynamic>) continue;
+
+            // Check for Article type
+            final type = item['@type'];
+            if (type == 'Article' || type == 'NewsArticle' || type == 'BlogPosting') {
+              final datePublished = item['datePublished'];
+              if (datePublished != null && datePublished is String) {
+                try {
+                  final date = DateTime.parse(datePublished.trim());
+                  debugPrint('📅 Published date from JSON-LD: $date');
+                  return date;
+                } catch (e) {
+                  debugPrint('⚠️ Failed to parse JSON-LD date: $datePublished');
+                }
+              }
+            }
+          }
+        } catch (e) {
+          debugPrint('⚠️ Failed to parse JSON-LD script: $e');
+          continue;
+        }
+      }
+    } catch (e) {
+      debugPrint('❌ Error processing JSON-LD: $e');
+    }
+
+    debugPrint('❌ No published date found');
+    return null;
+  }
+
+  String? _extractCoverImageUrl(dom.Document doc, String baseUrl) {
+    String? getMeta(String selector) => doc.querySelector(selector)?.attributes['content'];
+
+    // Try various meta tags for cover image
+    final imageSelectors = [
+      'meta[property="og:image"]',
+      'meta[property="og:image:url"]',
+      'meta[name="twitter:image"]',
+      'meta[name="twitter:image:src"]',
+      'meta[property="article:image"]',
+      'meta[name="thumbnail"]',
+    ];
+
+    for (final selector in imageSelectors) {
+      final imageUrl = getMeta(selector);
+      if (imageUrl != null && imageUrl.trim().isNotEmpty) {
+        try {
+          // Resolve relative URLs to absolute
+          final absoluteUrl = Uri.parse(baseUrl).resolve(imageUrl.trim()).toString();
+          debugPrint('🖼️ Cover image from $selector: $absoluteUrl');
+          return absoluteUrl;
+        } catch (e) {
+          debugPrint('⚠️ Failed to resolve image URL: $imageUrl');
+          continue;
+        }
+      }
+    }
+
+    // Try link tag
+    final linkImage = doc.querySelector('link[rel="image_src"]')?.attributes['href'];
+    if (linkImage != null && linkImage.trim().isNotEmpty) {
+      try {
+        final absoluteUrl = Uri.parse(baseUrl).resolve(linkImage.trim()).toString();
+        debugPrint('🖼️ Cover image from link[rel="image_src"]: $absoluteUrl');
+        return absoluteUrl;
+      } catch (e) {
+        debugPrint('⚠️ Failed to resolve link image URL: $linkImage');
+      }
+    }
+
+    // Try schema.org JSON-LD
+    try {
+      final scripts = doc.querySelectorAll('script[type="application/ld+json"]');
+      for (final script in scripts) {
+        final jsonText = script.text;
+        if (jsonText.isEmpty) continue;
+
+        try {
+          final dynamic jsonData = jsonDecode(jsonText);
+          final List<dynamic> items = jsonData is List ? jsonData : [jsonData];
+
+          for (final item in items) {
+            if (item is! Map<String, dynamic>) continue;
+
+            final type = item['@type'];
+            if (type == 'Article' || type == 'NewsArticle' || type == 'BlogPosting') {
+              final image = item['image'];
+              String? imageUrl;
+
+              if (image is String) {
+                imageUrl = image;
+              } else if (image is Map && image['url'] is String) {
+                imageUrl = image['url'];
+              } else if (image is List && image.isNotEmpty) {
+                final first = image.first;
+                if (first is String) {
+                  imageUrl = first;
+                } else if (first is Map && first['url'] is String) {
+                  imageUrl = first['url'];
+                }
+              }
+
+              if (imageUrl != null && imageUrl.trim().isNotEmpty) {
+                try {
+                  final absoluteUrl = Uri.parse(baseUrl).resolve(imageUrl.trim()).toString();
+                  debugPrint('🖼️ Cover image from JSON-LD: $absoluteUrl');
+                  return absoluteUrl;
+                } catch (e) {
+                  debugPrint('⚠️ Failed to resolve JSON-LD image URL: $imageUrl');
+                }
+              }
+            }
+          }
+        } catch (e) {
+          continue;
+        }
+      }
+    } catch (e) {
+      debugPrint('❌ Error processing JSON-LD for image: $e');
+    }
+
+    // Fallback: Find first large image in article content
+    try {
+      final articleSelectors = [
+        '[itemprop="articleBody"] img',
+        'article img',
+        '.article-content img',
+        '.entry-content img',
+        '.post-content img',
+        '.detail-text img',
+        '.read__content img',
+      ];
+
+      for (final selector in articleSelectors) {
+        final images = doc.querySelectorAll(selector);
+        for (final img in images) {
+          final src = img.attributes['src'] ?? img.attributes['data-src'];
+          if (src == null || src.trim().isEmpty) continue;
+
+          // Skip if image looks like an ad
+          if (_isLikelyAdImage(img)) continue;
+
+          try {
+            final absoluteUrl = Uri.parse(baseUrl).resolve(src.trim()).toString();
+            debugPrint('🖼️ Cover image from article content (fallback): $absoluteUrl');
+            return absoluteUrl;
+          } catch (e) {
+            continue;
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('❌ Error finding fallback image: $e');
+    }
+
+    debugPrint('❌ No cover image found');
+    return null;
+  }
+
+  bool _isLikelyAdImage(dom.Element img) {
+    final src = img.attributes['src'] ?? img.attributes['data-src'] ?? '';
+    final className = (img.attributes['class'] ?? '').toLowerCase();
+    final id = (img.attributes['id'] ?? '').toLowerCase();
+    final alt = (img.attributes['alt'] ?? '').toLowerCase();
+    final combined = '$className $id $alt $src'.toLowerCase();
+
+    // Check for ad-related keywords
+    final adKeywords = [
+      'ad', 'advertisement', 'banner', 'promo', 'sponsored',
+      'widget', 'sidebar', 'related', 'recommended'
+    ];
+
+    for (final keyword in adKeywords) {
+      if (combined.contains(keyword)) {
+        debugPrint('🚫 Skipping ad image: $src (contains: $keyword)');
+        return true;
+      }
+    }
+
+    // Check parent elements
+    var parent = img.parent;
+    for (var i = 0; i < 3 && parent != null; i++) {
+      final parentClass = (parent.attributes['class'] ?? '').toLowerCase();
+      final parentId = (parent.attributes['id'] ?? '').toLowerCase();
+      final parentCombined = '$parentClass $parentId';
+
+      for (final keyword in adKeywords) {
+        if (parentCombined.contains(keyword)) {
+          debugPrint('🚫 Skipping ad image: $src (parent contains: $keyword)');
+          return true;
+        }
+      }
+      parent = parent.parent;
+    }
+
+    return false;
+  }
+
+  Future<Uint8List?> _downloadImage(String imageUrl) async {
+    try {
+      debugPrint('⬇️ Downloading image: $imageUrl');
+      final response = await http.get(
+        Uri.parse(imageUrl),
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+          'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+        },
+      );
+
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final bytes = response.bodyBytes;
+        debugPrint('✅ Image downloaded: ${bytes.length} bytes');
+        return bytes;
+      } else {
+        debugPrint('❌ Failed to download image: HTTP ${response.statusCode}');
+        return null;
+      }
+    } catch (e) {
+      debugPrint('❌ Error downloading image: $e');
+      return null;
+    }
   }
 }
 

@@ -1106,13 +1106,60 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
         extractedItems.add('Ringkasan');
       }
 
+      // Extract media name
+      if ((_mediaName.text).isEmpty && (meta.mediaName ?? '').isNotEmpty) {
+        _mediaName.text = meta.mediaName!;
+        extractedCount++;
+        extractedItems.add('Nama Media');
+      }
+
+      // Extract published date
+      if (_date == null && meta.publishedDate != null) {
+        setState(() {
+          _date = meta.publishedDate;
+        });
+        extractedCount++;
+        extractedItems.add('Tanggal Publikasi');
+      }
+
+      // Extract cover image
+      if (_pickedImageBytes == null && meta.coverImageBytes != null && meta.coverImageBytes!.isNotEmpty) {
+        setState(() {
+          _pickedImageBytes = meta.coverImageBytes;
+          // Try to determine extension from URL
+          if (meta.coverImageUrl != null) {
+            final url = meta.coverImageUrl!.toLowerCase();
+            if (url.endsWith('.png')) {
+              _pickedImageExt = 'png';
+            } else if (url.endsWith('.jpg') || url.endsWith('.jpeg')) {
+              _pickedImageExt = 'jpg';
+            } else if (url.endsWith('.webp')) {
+              _pickedImageExt = 'webp';
+            } else if (url.endsWith('.gif')) {
+              _pickedImageExt = 'gif';
+            } else {
+              _pickedImageExt = 'jpg'; // default
+            }
+          } else {
+            _pickedImageExt = 'jpg';
+          }
+          _removeImage = false;
+        });
+        extractedCount++;
+        extractedItems.add('Gambar Sampul');
+      }
+
       // Check for JavaScript-rendered page
       if (meta.fullContent == '__JS_RENDERED_PAGE__') {
         if (mounted) {
+          final message = extractedCount > 0
+              ? 'Website ini menggunakan JavaScript untuk menampilkan konten. Konten artikel tidak bisa diekstrak, tetapi berhasil mengekstrak: ${extractedItems.join(", ")}'
+              : 'Website ini menggunakan JavaScript untuk menampilkan konten. Konten artikel tidak bisa diekstrak secara otomatis. Silakan copy-paste manual.';
+
           UiToast.show(
             context,
-            message: 'Website ini menggunakan JavaScript untuk menampilkan konten. Konten artikel tidak bisa diekstrak secara otomatis. Silakan copy-paste manual.',
-            type: ToastType.error,
+            message: message,
+            type: extractedCount > 0 ? ToastType.warning : ToastType.error,
             duration: const Duration(seconds: 6),
           );
         }
