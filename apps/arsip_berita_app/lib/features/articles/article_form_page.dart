@@ -174,6 +174,7 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
   final List<String> _tags = [];
   DateTime? _date;
   bool _loading = false;
+  bool _extracting = false;
   String? _canonical;
   String? _error;
   String? _titleError;
@@ -297,15 +298,34 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
     final sanitized = trimmed.contains('<')
         ? trimmed
         : '<p>${htmlEscape.convert(trimmed)}</p>';
+
+    // IMPORTANT: Add explicit newlines in HTML to force paragraph separation
+    // Replace closing </p> with </p> followed by two <br> tags
+    // This ensures HtmlToDelta recognizes them as separate paragraphs with spacing
+    final spacedHtml = sanitized
+        .replaceAll('</p><p>', '</p><br><br><p>')
+        .replaceAll('</h1><p>', '</h1><br><br><p>')
+        .replaceAll('</h2><p>', '</h2><br><br><p>')
+        .replaceAll('</h3><p>', '</h3><br><br><p>')
+        .replaceAll('</h4><p>', '</h4><br><br><p>')
+        .replaceAll('</ul><p>', '</ul><br><br><p>')
+        .replaceAll('</ol><p>', '</ol><br><br><p>')
+        .replaceAll('</blockquote><p>', '</blockquote><br><br><p>');
+
+    // Debug: print HTML yang akan dikonversi
+    debugPrint('=== HTML TO CONVERT ===');
+    debugPrint(spacedHtml.substring(0, spacedHtml.length.clamp(0, 1000)));
+
     try {
       // Use HtmlToDelta converter to properly parse HTML with formatting
       final converter = HtmlToDelta();
-      final delta = converter.convert(sanitized);
+      final delta = converter.convert(spacedHtml);
 
-      // Debug: check if delta has proper structure
+      // Debug: check delta
+      debugPrint('=== CONVERTED DELTA ===');
       debugPrint('Loaded delta: ${delta.toJson()}');
 
-      final document = Document.fromDelta(delta);
+      final document = Document.fromJson(delta.toJson());
       final widths = _extractImageWidths(trimmed);
       setState(() {
         _applyDocument(document, widths: widths);
@@ -1034,43 +1054,142 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
   }
 
   Future<void> _extract() async {
+    // Validasi URL terlebih dahulu
+    final url = _url.text.trim();
+    if (url.isEmpty) {
+      UiToast.show(
+        context,
+        message: 'Mohon masukkan URL artikel terlebih dahulu',
+        type: ToastType.error,
+      );
+      return;
+    }
+
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      UiToast.show(
+        context,
+        message: 'URL harus dimulai dengan http:// atau https://',
+        type: ToastType.error,
+      );
+      return;
+    }
+
     setState(() {
-      _loading = true;
+      _extracting = true;
       _error = null;
     });
+
     try {
       await widget.db.init();
       final svc = MetadataExtractor();
-      final meta = await svc.fetch(_url.text.trim());
-      if (meta != null) {
-        _canonical = meta.canonicalUrl;
-        if ((_title.text).isEmpty && (meta.title ?? '').isNotEmpty) {
-          _title.text = meta.title!;
-        }
-        if ((_excerpt.text).isEmpty && (meta.excerpt ?? '').isNotEmpty) {
-          _excerpt.text = meta.excerpt!;
-        }
-        final cand = ((meta.description ?? '').trim().isNotEmpty)
-            ? meta.description!.trim()
-            : (meta.excerpt ?? '').trim();
-        if (cand.isNotEmpty) {
-          await _loadHtmlIntoQuill(cand);
-        }
+      final meta = await svc.fetch(url);
+
+      if (meta == null) {
+        throw Exception('Gagal mengakses URL. Pastikan URL valid dan dapat diakses.');
       }
+
+      // Track what was extracted
+      int extractedCount = 0;
+      final extractedItems = <String>[];
+
+      _canonical = meta.canonicalUrl;
+
+      if ((_title.text).isEmpty && (meta.title ?? '').isNotEmpty) {
+        _title.text = meta.title!;
+        extractedCount++;
+        extractedItems.add('Judul');
+      }
+
+      if ((_excerpt.text).isEmpty && (meta.excerpt ?? '').isNotEmpty) {
+        _excerpt.text = meta.excerpt!;
+        extractedCount++;
+        extractedItems.add('Ringkasan');
+      }
+
+      // Check for JavaScript-rendered page
+      if (meta.fullContent == '__JS_RENDERED_PAGE__') {
+        if (mounted) {
+          UiToast.show(
+            context,
+            message: 'Website ini menggunakan JavaScript untuk menampilkan konten. Konten artikel tidak bisa diekstrak secara otomatis. Silakan copy-paste manual.',
+            type: ToastType.error,
+            duration: const Duration(seconds: 6),
+          );
+        }
+        return;
+      }
+
+      // Prioritas: fullContent > description > excerpt
+      String? contentToLoad;
+      if ((meta.fullContent ?? '').trim().isNotEmpty) {
+        contentToLoad = meta.fullContent!.trim();
+        extractedItems.add('Konten lengkap');
+      } else if ((meta.description ?? '').trim().isNotEmpty) {
+        contentToLoad = meta.description!.trim();
+        extractedItems.add('Deskripsi');
+      } else if ((meta.excerpt ?? '').trim().isNotEmpty) {
+        contentToLoad = meta.excerpt!.trim();
+      }
+
+      if (contentToLoad != null && contentToLoad.isNotEmpty) {
+        await _loadHtmlIntoQuill(contentToLoad);
+        extractedCount++;
+      }
+
       if (_canonical != null) {
         final existingId =
             await widget.db.findArticleIdByCanonicalUrl(_canonical!);
         if (existingId != null &&
             (!_isEditing || existingId != widget.article!.id)) {
           _error = 'Artikel dengan canonical_url sudah ada: $_canonical';
+          if (mounted) {
+            UiToast.show(
+              context,
+              message: 'Peringatan: Artikel ini sudah ada di database',
+              type: ToastType.error,
+              duration: const Duration(seconds: 4),
+            );
+          }
+          return;
+        }
+      }
+
+      // Show success message
+      if (mounted) {
+        if (extractedCount > 0) {
+          UiToast.show(
+            context,
+            message: 'Berhasil mengekstrak: ${extractedItems.join(", ")}',
+            type: ToastType.success,
+            duration: const Duration(seconds: 3),
+          );
+        } else {
+          UiToast.show(
+            context,
+            message: 'Tidak ada konten yang dapat diekstrak dari URL',
+            type: ToastType.error,
+          );
         }
       }
     } catch (e) {
       _error = e.toString();
+      if (mounted) {
+        String errorMessage = e.toString();
+        if (errorMessage.startsWith('Exception: ')) {
+          errorMessage = errorMessage.substring('Exception: '.length);
+        }
+
+        UiToast.show(
+          context,
+          message: 'Gagal mengekstrak: $errorMessage',
+          type: ToastType.error,
+          duration: const Duration(seconds: 4),
+        );
+      }
     } finally {
       if (mounted) {
         setState(() {
-          _loading = false;
+          _extracting = false;
         });
       }
     }
@@ -1363,7 +1482,7 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
         body: Stack(
         children: [
           AbsorbPointer(
-            absorbing: _prefillInProgress,
+            absorbing: _prefillInProgress || _extracting,
             child: UiScaffold(
               title: _isEditing ? 'Edit Artikel' : 'Tambah Artikel',
               actions: [
@@ -1430,6 +1549,55 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
                 ),
               ),
             ),
+          if (_extracting)
+            Positioned.fill(
+              child: Container(
+                color: Colors.black.withValues(alpha: 0.7),
+                child: Center(
+                  child: Container(
+                    padding: const EdgeInsets.all(32),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(16),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.2),
+                          blurRadius: 20,
+                          offset: const Offset(0, 10),
+                        ),
+                      ],
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _SpinningMagicWand(
+                          color: Theme.of(context).primaryColor,
+                        ),
+                        const SizedBox(height: Spacing.lg),
+                        const SizedBox(
+                          width: 200,
+                          child: LinearProgressIndicator(),
+                        ),
+                        const SizedBox(height: Spacing.md),
+                        Text(
+                          'Mengekstrak konten artikel...',
+                          style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                                fontWeight: FontWeight.w600,
+                              ),
+                        ),
+                        const SizedBox(height: Spacing.xs),
+                        Text(
+                          'Mohon tunggu sebentar',
+                          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                color: DS.textDim,
+                              ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
         ],
       ),
       ),
@@ -1446,13 +1614,9 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
             controller: _url,
             hint: 'Link artikel',
             prefix: Icons.link,
-            suffix: InkWell(
-              onTap: _loading ? null : _extract,
-              borderRadius: BorderRadius.circular(8),
-              child: const Padding(
-                padding: EdgeInsets.all(8),
-                child: Icon(Icons.auto_fix_high),
-              ),
+            suffix: _MagicWandButton(
+              onTap: (_loading || _extracting) ? null : _extract,
+              isLoading: _extracting,
             ),
           ),
           const SizedBox(height: Spacing.md),
@@ -1686,6 +1850,10 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
             tags: _tags,
             onAdded: (v) => setState(() => _tags.add(v)),
             onRemoved: (v) => setState(() => _tags.remove(v)),
+            suggestionFetcher: (text) async {
+              await widget.db.init();
+              return widget.db.suggestTags(text);
+            },
           ),
           const SizedBox(height: Spacing.md),
           TagEditor(
@@ -2017,6 +2185,22 @@ class _CompactQuillToolbarState extends State<_CompactQuillToolbar> {
         attribute: Attribute.ol,
         icon: Icons.format_list_numbered,
         tooltip: 'Numbered List',
+      ),
+      _buildToolbarButton(
+        icon: Icons.format_indent_increase,
+        tooltip: 'Tambah Indentasi',
+        onPressed: () {
+          widget.controller.indentSelection(true);
+          setState(() {});
+        },
+      ),
+      _buildToolbarButton(
+        icon: Icons.format_indent_decrease,
+        tooltip: 'Kurangi Indentasi',
+        onPressed: () {
+          widget.controller.indentSelection(false);
+          setState(() {});
+        },
       ),
       _buildToolbarButton(
         icon: _showAll ? Icons.expand_less : Icons.expand_more,
@@ -2376,5 +2560,168 @@ class _CustomSelectionToolbarState extends State<_CustomSelectionToolbar> {
 
   void _handleRedo() {
     widget.controller.redo();
+  }
+}
+
+class _SpinningMagicWand extends StatefulWidget {
+  final Color color;
+
+  const _SpinningMagicWand({
+    required this.color,
+  });
+
+  @override
+  State<_SpinningMagicWand> createState() => _SpinningMagicWandState();
+}
+
+class _SpinningMagicWandState extends State<_SpinningMagicWand>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      duration: const Duration(milliseconds: 1000),
+      vsync: this,
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, child) {
+        return Transform.rotate(
+          angle: _controller.value * 2 * 3.14159,
+          child: Icon(
+            Icons.auto_fix_high,
+            size: 48,
+            color: widget.color,
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _MagicWandButton extends StatefulWidget {
+  final VoidCallback? onTap;
+  final bool isLoading;
+
+  const _MagicWandButton({
+    required this.onTap,
+    this.isLoading = false,
+  });
+
+  @override
+  State<_MagicWandButton> createState() => _MagicWandButtonState();
+}
+
+class _MagicWandButtonState extends State<_MagicWandButton>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _animationController;
+  late Animation<double> _rotationAnimation;
+  late Animation<double> _scaleAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+    _animationController = AnimationController(
+      duration: const Duration(milliseconds: 600),
+      vsync: this,
+    );
+
+    _rotationAnimation = Tween<double>(
+      begin: 0,
+      end: 1,
+    ).animate(CurvedAnimation(
+      parent: _animationController,
+      curve: Curves.easeInOut,
+    ));
+
+    _scaleAnimation = TweenSequence<double>([
+      TweenSequenceItem(
+        tween: Tween<double>(begin: 1.0, end: 1.3)
+            .chain(CurveTween(curve: Curves.easeOut)),
+        weight: 50,
+      ),
+      TweenSequenceItem(
+        tween: Tween<double>(begin: 1.3, end: 1.0)
+            .chain(CurveTween(curve: Curves.easeIn)),
+        weight: 50,
+      ),
+    ]).animate(_animationController);
+  }
+
+  @override
+  void dispose() {
+    _animationController.dispose();
+    super.dispose();
+  }
+
+  @override
+  void didUpdateWidget(_MagicWandButton oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.isLoading && !oldWidget.isLoading) {
+      _animationController.repeat();
+    } else if (!widget.isLoading && oldWidget.isLoading) {
+      _animationController.stop();
+      _animationController.reset();
+    }
+  }
+
+  void _handleTap() {
+    if (widget.onTap != null) {
+      _animationController.forward().then((_) {
+        _animationController.reset();
+      });
+      widget.onTap!();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _animationController,
+      builder: (context, child) {
+        return Transform.scale(
+          scale: widget.isLoading ? 1.0 : _scaleAnimation.value,
+          child: Transform.rotate(
+            angle: _rotationAnimation.value * 2 * 3.14159,
+            child: InkWell(
+              onTap: widget.onTap == null ? null : _handleTap,
+              borderRadius: BorderRadius.circular(8),
+              child: Padding(
+                padding: const EdgeInsets.all(8),
+                child: widget.isLoading
+                    ? SizedBox(
+                        width: 24,
+                        height: 24,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                            Theme.of(context).primaryColor,
+                          ),
+                        ),
+                      )
+                    : Icon(
+                        Icons.auto_fix_high,
+                        color: widget.onTap == null
+                            ? Colors.grey
+                            : Theme.of(context).primaryColor,
+                      ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
   }
 }

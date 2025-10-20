@@ -513,6 +513,34 @@ class LocalDatabase {
     return rows.map((e) => e['name'] as String).toList();
   }
 
+  Future<List<String>> suggestTags(String prefix, {int limit = 10}) async {
+    final db = _db;
+    if (db == null) return [];
+
+    // Get all tags from all articles
+    final rows = await db.rawQuery(
+        "select distinct tags from articles where tags is not null and tags != ''");
+
+    // Extract individual tags and filter by prefix
+    final allTags = <String>{};
+    for (final row in rows) {
+      final tagsString = row['tags'] as String?;
+      if (tagsString != null && tagsString.isNotEmpty) {
+        final tags = tagsString.split(',').map((t) => t.trim()).where((t) => t.isNotEmpty);
+        allTags.addAll(tags);
+      }
+    }
+
+    // Filter tags by prefix and sort
+    final filtered = allTags
+        .where((tag) => tag.toLowerCase().contains(prefix.toLowerCase()))
+        .toList()
+      ..sort();
+
+    // Return limited results
+    return filtered.take(limit).toList();
+  }
+
   // Upsert helpers for entities
   Future<int> upsertMedia(String name, String type) async {
     final db = _db;
