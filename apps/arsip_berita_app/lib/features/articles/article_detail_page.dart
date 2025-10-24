@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'dart:convert';
 import 'dart:io';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../util/platform_io.dart';
 import '../../data/local/db.dart';
 import '../../widgets/page_container.dart';
@@ -13,6 +15,7 @@ import '../../widgets/image_preview.dart';
 import 'package:flutter_widget_from_html_core/flutter_widget_from_html_core.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'article_form_page.dart';
+import 'quote_confirmation_page.dart';
 
 class ArticleDetailPage extends StatefulWidget {
   final ArticleModel article;
@@ -28,6 +31,8 @@ class _ArticleDetailPageState extends State<ArticleDetailPage> {
       _renderDesc; // processed HTML for rendering (e.g., local images -> data URIs)
   ArticleModel? _fullArticle; // Article with full content loaded from DB
   bool _loadingFullArticle = true;
+  String? _cachedApiKey; // Cached API key from SharedPreferences
+  static const String _apiKeyStorageKey = 'openai_api_key';
 
   @override
   void initState() {
@@ -36,6 +41,39 @@ class _ArticleDetailPageState extends State<ArticleDetailPage> {
     _loadFullArticle();
     // Kick off tag loading immediately; _loadTags will init DB as needed
     _tagsFuture = _loadTags();
+    // Load cached API key
+    _loadApiKey();
+  }
+
+  @override
+  void dispose() {
+    super.dispose();
+  }
+
+  Future<void> _loadApiKey() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final apiKey = prefs.getString(_apiKeyStorageKey);
+      if (mounted) {
+        setState(() {
+          _cachedApiKey = apiKey;
+        });
+      }
+    } catch (e) {
+      debugPrint('Error loading API key: $e');
+    }
+  }
+
+  Future<void> _saveApiKey(String apiKey) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_apiKeyStorageKey, apiKey);
+      setState(() {
+        _cachedApiKey = apiKey;
+      });
+    } catch (e) {
+      debugPrint('Error saving API key: $e');
+    }
   }
 
   Future<void> _loadFullArticle() async {
@@ -559,6 +597,174 @@ class _ArticleDetailPageState extends State<ArticleDetailPage> {
     }
   }
 
+  Future<void> _createQuoteFromClipboard() async {
+    try {
+      // Get text from clipboard
+      final clipboardData = await Clipboard.getData(Clipboard.kTextPlain);
+      final text = clipboardData?.text ?? '';
+
+      if (text.trim().isEmpty) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Clipboard kosong. Silakan select & copy text dari artikel terlebih dahulu.'),
+            backgroundColor: Colors.orange,
+            duration: Duration(seconds: 3),
+          ),
+        );
+        return;
+      }
+
+      // Call create quote post with clipboard text
+      await _createQuotePost(text);
+    } catch (e) {
+      debugPrint('Error reading clipboard: $e');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error membaca clipboard: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  Future<void> _createQuotePost(String selectedText) async {
+    if (selectedText.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Tidak ada teks yang dipilih'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    // Check if API key is cached, if not show dialog
+    String? apiKey = _cachedApiKey;
+    if (apiKey == null || apiKey.trim().isEmpty) {
+      apiKey = await _showApiKeyDialog();
+      if (apiKey == null || apiKey.trim().isEmpty) {
+        return;
+      }
+      // Save API key for future use
+      await _saveApiKey(apiKey);
+    }
+
+    // Navigate to confirmation page instead of directly generating
+    if (!mounted) return;
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => QuoteConfirmationPage(
+          initialText: selectedText,
+          apiKey: apiKey!, // apiKey is guaranteed non-null here
+        ),
+      ),
+    );
+  }
+
+  Future<String?> _showApiKeyDialog() async {
+    final controller = TextEditingController();
+    return showDialog<String>(
+      context: context,
+      builder: (context) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 420),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 32),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 76,
+                  height: 76,
+                  decoration: BoxDecoration(
+                    color: DS.accent.withValues(alpha: 0.12),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    Icons.key,
+                    size: 36,
+                    color: DS.accent,
+                  ),
+                ),
+                const SizedBox(height: 20),
+                Text(
+                  'OpenAI API Key',
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.w600,
+                        color: DS.text,
+                      ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'Masukkan OpenAI API key Anda untuk generate quote image.',
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: DS.textDim,
+                      ),
+                ),
+                const SizedBox(height: 20),
+                TextField(
+                  controller: controller,
+                  obscureText: true,
+                  decoration: InputDecoration(
+                    hintText: 'sk-...',
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 12,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 28),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextButton(
+                        onPressed: () => Navigator.of(context).pop(null),
+                        style: TextButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                            side: BorderSide(color: DS.border),
+                          ),
+                        ),
+                        child: const Text('Batal'),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: ElevatedButton(
+                        onPressed: () {
+                          Navigator.of(context).pop(controller.text);
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: DS.accent,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                        ),
+                        child: const Text('Generate'),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final a = widget.article;
@@ -567,6 +773,11 @@ class _ArticleDetailPageState extends State<ArticleDetailPage> {
       body: UiScaffold(
         title: 'Detail Artikel',
         actions: [
+          IconButton(
+            tooltip: 'Create Quote Post (dari clipboard)',
+            onPressed: _createQuoteFromClipboard,
+            icon: const Icon(Icons.format_quote),
+          ),
           IconButton(
             tooltip: 'Duplikat',
             onPressed: () => _duplicateArticle(),
