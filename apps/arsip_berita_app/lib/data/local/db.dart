@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+import '../../models/quote_template.dart';
 
 class LocalDatabase {
   Database? _db;
@@ -50,7 +51,7 @@ class LocalDatabase {
     print('Database exists: $exists');
     _db = await openDatabase(
       path,
-      version: 8,
+      version: 9,
       onCreate: (db, v) async {
         await db.execute('''
           create table media (
@@ -140,6 +141,24 @@ class LocalDatabase {
             primary key (article_id, location_id)
           );
         ''');
+
+        // Quote templates table
+        await db.execute('''
+          create table quote_templates (
+            id integer primary key autoincrement,
+            name text not null,
+            description text not null,
+            prompt_template text not null,
+            preview_image_url text,
+            style_category text not null,
+            custom_settings text,
+            is_active integer not null default 1,
+            created_at text not null,
+            updated_at text not null
+          );
+        ''');
+        await db.execute(
+            'create index idx_quote_templates_style on quote_templates(style_category)');
       },
       onUpgrade: (db, oldV, newV) async {
         if (oldV < 2) {
@@ -234,6 +253,25 @@ class LocalDatabase {
             // ignore if column already exists
           }
         }
+        if (oldV < 9) {
+          // Add quote templates table
+          await db.execute('''
+            create table if not exists quote_templates (
+              id integer primary key autoincrement,
+              name text not null,
+              description text not null,
+              prompt_template text not null,
+              preview_image_url text,
+              style_category text not null,
+              custom_settings text,
+              is_active integer not null default 1,
+              created_at text not null,
+              updated_at text not null
+            );
+          ''');
+          await db.execute(
+              'create index if not exists idx_quote_templates_style on quote_templates(style_category)');
+        }
       },
     );
 
@@ -243,6 +281,9 @@ class LocalDatabase {
     // Legacy migration should only happen once at onCreate, not on every init().
     //
     // If you need to manually restore from legacy, use a separate migration tool.
+
+    // Initialize default quote templates if none exist
+    await initDefaultQuoteTemplates();
   }
 
   Future<void> upsertArticle(ArticleModel a) async {
@@ -721,6 +762,386 @@ class LocalDatabase {
 
     await batch.commit(noResult: true);
     print('Article $articleId deleted successfully');
+  }
+
+  // ============ Quote Templates Methods ============
+
+  /// Get all active quote templates
+  Future<List<QuoteTemplate>> getQuoteTemplates({bool? activeOnly}) async {
+    final db = _db;
+    if (db == null) return [];
+
+    final where = activeOnly == true ? 'is_active = 1' : null;
+    final rows = await db.query(
+      'quote_templates',
+      where: where,
+      orderBy: 'style_category asc, name asc',
+    );
+
+    return rows.map((r) => QuoteTemplate.fromMap(r)).toList();
+  }
+
+  /// Get quote template by ID
+  Future<QuoteTemplate?> getQuoteTemplateById(int id) async {
+    final db = _db;
+    if (db == null) return null;
+
+    final rows = await db.query(
+      'quote_templates',
+      where: 'id = ?',
+      whereArgs: [id],
+      limit: 1,
+    );
+
+    if (rows.isEmpty) return null;
+    return QuoteTemplate.fromMap(rows.first);
+  }
+
+  /// Get quote templates by style category
+  Future<List<QuoteTemplate>> getQuoteTemplatesByCategory(String category) async {
+    final db = _db;
+    if (db == null) return [];
+
+    final rows = await db.query(
+      'quote_templates',
+      where: 'style_category = ? and is_active = 1',
+      whereArgs: [category],
+      orderBy: 'name asc',
+    );
+
+    return rows.map((r) => QuoteTemplate.fromMap(r)).toList();
+  }
+
+  /// Insert new quote template
+  Future<int> insertQuoteTemplate(QuoteTemplate template) async {
+    final db = _db;
+    if (db == null) return 0;
+
+    final data = template.toMap();
+    data['created_at'] = DateTime.now().toIso8601String();
+    data['updated_at'] = DateTime.now().toIso8601String();
+
+    return await db.insert('quote_templates', data);
+  }
+
+  /// Update quote template
+  Future<void> updateQuoteTemplate(QuoteTemplate template) async {
+    final db = _db;
+    if (db == null || template.id == null) return;
+
+    final data = template.toMap();
+    data['updated_at'] = DateTime.now().toIso8601String();
+
+    await db.update(
+      'quote_templates',
+      data,
+      where: 'id = ?',
+      whereArgs: [template.id],
+    );
+  }
+
+  /// Delete quote template
+  Future<void> deleteQuoteTemplate(int id) async {
+    final db = _db;
+    if (db == null) return;
+
+    await db.delete(
+      'quote_templates',
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  /// Add new template if it doesn't exist (by name)
+  Future<void> addTemplateIfNotExists({
+    required String name,
+    required String description,
+    required String styleCategory,
+    required String promptTemplate,
+    String? previewImageUrl,
+  }) async {
+    final db = _db;
+    if (db == null) return;
+
+    // Check if template with this name already exists
+    final existing = await db.query(
+      'quote_templates',
+      where: 'name = ?',
+      whereArgs: [name],
+      limit: 1,
+    );
+
+    if (existing.isNotEmpty) {
+      print('Template "$name" already exists, skipping...');
+      return;
+    }
+
+    // Insert the new template
+    final now = DateTime.now().toIso8601String();
+    await db.insert('quote_templates', {
+      'name': name,
+      'description': description,
+      'style_category': styleCategory,
+      'prompt_template': promptTemplate,
+      'preview_image_url': previewImageUrl,
+      'is_active': 1,
+      'created_at': now,
+      'updated_at': now,
+    });
+
+    print('Template "$name" added successfully');
+  }
+
+  /// Add missing default templates to existing database
+  Future<void> _addMissingDefaultTemplates() async {
+    // Add Orange Brush Strokes template if it doesn't exist
+    await addTemplateIfNotExists(
+      name: 'Orange Brush Strokes',
+      description: 'Desain dengan coretan kuas oranye, kotak teks putih, dan tanda kutip kuning',
+      styleCategory: 'creative',
+      promptTemplate: '''Buat gambar kutipan inspiratif dengan spesifikasi berikut:
+
+KONTEN TEKS:
+- Header: "QUOTES" ditampilkan di bagian atas dengan font tebal
+- Kutipan Utama: "[QUOTE_TEXT]"
+- Sumber: "@[SOURCE]"
+- Subtitle (jika ada): "[SUBTITLE]"
+- Link/Watermark: "[LINK]"
+
+SPESIFIKASI DESAIN:
+- Format persegi (1080x1080px)
+- Latar belakang putih dengan bayangan daun yang samar di bagian atas untuk suasana fresh
+- Kotak teks putih (white card) di tengah dengan shadow untuk kedalaman
+- Tanda kutip ganda besar berwarna kuning/orange (#FFB84D) di sudut kiri atas kotak teks
+- Coretan kuas (brush strokes) berwarna oranye cerah di belakang kotak teks, menciptakan efek dinamis dan energik
+- Header "QUOTES" dalam font sans-serif tebal, warna hitam
+- Kutipan utama dalam font serif elegan (seperti Playfair Display), ukuran besar (44-52pt), warna hitam
+- Sumber dengan "@" prefix dalam font sans-serif medium (24pt), warna hitam
+- Subtitle (jika ada) dalam font regular (18pt), warna abu-abu gelap
+- Link/watermark di bagian paling bawah dalam font small (16pt), warna abu-abu gelap
+- Komposisi seimbang dengan white space yang cukup
+- Style modern dan fresh dengan sentuhan artistik dari brush strokes
+- Cocok untuk Instagram dan media sosial
+
+CATATAN:
+- Jika [SUBTITLE] kosong, jangan tampilkan bagian subtitle
+- Pastikan semua teks terbaca dengan jelas di atas latar belakang
+- Gunakan tipografi yang konsisten dan profesional
+- Brush strokes harus terlihat natural dan tidak menghalangi keterbacaan teks''',
+    );
+  }
+
+  /// Initialize default quote templates (if none exist)
+  Future<void> initDefaultQuoteTemplates() async {
+    final db = _db;
+    if (db == null) return;
+
+    // Check if templates already exist
+    final count = Sqflite.firstIntValue(
+      await db.rawQuery('select count(*) from quote_templates'),
+    );
+
+    if (count != null && count > 0) {
+      // Add new templates that might not exist yet
+      await _addMissingDefaultTemplates();
+      return; // Templates already initialized
+    }
+
+    // Insert default templates
+    final now = DateTime.now().toIso8601String();
+
+    await db.insert('quote_templates', {
+      'name': 'Minimal Clean',
+      'description': 'Desain minimalis dengan background putih bersih dan tipografi sederhana',
+      'style_category': 'minimal',
+      'prompt_template': '''Create a minimalist quote card with these exact specifications:
+
+TEXT CONTENT:
+- Main Quote: "[QUOTE_TEXT]"
+- Attribution: "- [SOURCE]"
+- Subtitle: "[SUBTITLE]"
+- Watermark: "[LINK]"
+
+DESIGN SPECIFICATIONS:
+- Square format (1080x1080px)
+- Pure white background (#FFFFFF)
+- Centered layout with generous white space
+- Main quote in large, bold sans-serif font (48-60pt)
+- Attribution in medium weight (24pt)
+- Subtitle in light weight below attribution (18pt)
+- Watermark in bottom right corner, small and subtle (14pt)
+- All text in dark gray (#333333)
+- No decorative elements, borders, or icons
+- Clean, professional, and highly readable
+- Focus on typography and spacing''',
+      'preview_image_url': null,
+      'is_active': 1,
+      'created_at': now,
+      'updated_at': now,
+    });
+
+    await db.insert('quote_templates', {
+      'name': 'Bold Gradient',
+      'description': 'Background gradient cerah dengan tipografi tebal dan kontras tinggi',
+      'style_category': 'bold',
+      'prompt_template': '''Create a bold, eye-catching quote card:
+
+TEXT CONTENT:
+- Main Quote: "[QUOTE_TEXT]"
+- Attribution: "- [SOURCE]"
+- Subtitle: "[SUBTITLE]"
+- Watermark: "[LINK]"
+
+DESIGN SPECIFICATIONS:
+- Square format (1080x1080px)
+- Vibrant gradient background (blue to purple, or orange to pink)
+- All text in white with subtle shadow for depth
+- Main quote in extra bold sans-serif (56-72pt)
+- Centered and prominent placement
+- Attribution in bold (28pt)
+- Subtitle below attribution (20pt)
+- Watermark in bottom right (16pt)
+- High contrast and very readable
+- Modern, energetic, social media optimized
+- Use bright, saturated colors that pop''',
+      'preview_image_url': null,
+      'is_active': 1,
+      'created_at': now,
+      'updated_at': now,
+    });
+
+    await db.insert('quote_templates', {
+      'name': 'Elegant Serif',
+      'description': 'Tipografi serif klasik dengan accent line dan spacing elegan',
+      'style_category': 'elegant',
+      'prompt_template': '''Create an elegant, sophisticated quote card:
+
+TEXT CONTENT:
+- Main Quote: "[QUOTE_TEXT]"
+- Attribution: "- [SOURCE]"
+- Subtitle: "[SUBTITLE]"
+- Watermark: "[LINK]"
+
+DESIGN SPECIFICATIONS:
+- Square format (1080x1080px)
+- Cream or soft beige background (#F5F5DC or #FAF9F6)
+- Main quote in classic serif font (Playfair Display style, 44-56pt)
+- Centered with generous line spacing (1.6-1.8)
+- Decorative thin line above and below quote (gold or dark brown)
+- Attribution in elegant serif (26pt)
+- Subtitle in lighter serif style (18pt)
+- Watermark subtle in bottom right (14pt)
+- Text in deep brown or charcoal (#3E3E3E)
+- Refined, timeless, book-like aesthetic
+- Balanced composition with classical proportions''',
+      'preview_image_url': null,
+      'is_active': 1,
+      'created_at': now,
+      'updated_at': now,
+    });
+
+    await db.insert('quote_templates', {
+      'name': 'Modern Geometric',
+      'description': 'Desain modern dengan bentuk geometris dan warna-warna contemporary',
+      'style_category': 'modern',
+      'prompt_template': '''Create a modern, geometric quote card:
+
+TEXT CONTENT:
+- Main Quote: "[QUOTE_TEXT]"
+- Attribution: "- [SOURCE]"
+- Subtitle: "[SUBTITLE]"
+- Watermark: "[LINK]"
+
+DESIGN SPECIFICATIONS:
+- Square format (1080x1080px)
+- Background with geometric shapes (circles, triangles, or rectangles)
+- Color scheme: modern pastels or bold primary colors
+- Main quote in contemporary sans-serif (Montserrat style, 48-64pt)
+- Left-aligned or asymmetric layout
+- Attribution in medium weight (24pt)
+- Subtitle in regular weight (18pt)
+- Watermark in corner (14pt)
+- Use of negative space and geometric divisions
+- 2-3 colors maximum for clean look
+- Contemporary, design-forward aesthetic
+- Instagram/Pinterest optimized''',
+      'preview_image_url': null,
+      'is_active': 1,
+      'created_at': now,
+      'updated_at': now,
+    });
+
+    await db.insert('quote_templates', {
+      'name': 'Creative Artistic',
+      'description': 'Gaya artistik dengan elemen ilustrasi dan komposisi kreatif',
+      'style_category': 'creative',
+      'prompt_template': '''Create an artistic, creative quote card:
+
+TEXT CONTENT:
+- Main Quote: "[QUOTE_TEXT]"
+- Attribution: "- [SOURCE]"
+- Subtitle: "[SUBTITLE]"
+- Watermark: "[LINK]"
+
+DESIGN SPECIFICATIONS:
+- Square format (1080x1080px)
+- Background with subtle artistic elements (watercolor, brush strokes, or abstract shapes)
+- Hand-drawn or artistic font style for quote (42-58pt)
+- Creative, non-centered layout with dynamic composition
+- Attribution in complementary artistic font (22pt)
+- Subtitle integrated naturally (17pt)
+- Watermark styled to match aesthetic (13pt)
+- Warm, harmonious color palette
+- Organic, flowing design elements
+- Unique, memorable visual style
+- Balance between artistic and readable
+- Inspirational and uplifting mood''',
+      'preview_image_url': null,
+      'is_active': 1,
+      'created_at': now,
+      'updated_at': now,
+    });
+
+    await db.insert('quote_templates', {
+      'name': 'Orange Brush Strokes',
+      'description': 'Desain dengan coretan kuas oranye, kotak teks putih, dan tanda kutip kuning',
+      'style_category': 'creative',
+      'prompt_template': '''Buat gambar kutipan inspiratif dengan spesifikasi berikut:
+
+KONTEN TEKS:
+- Header: "QUOTES" ditampilkan di bagian atas dengan font tebal
+- Kutipan Utama: "[QUOTE_TEXT]"
+- Sumber: "@[SOURCE]"
+- Subtitle (jika ada): "[SUBTITLE]"
+- Link/Watermark: "[LINK]"
+
+SPESIFIKASI DESAIN:
+- Format persegi (1080x1080px)
+- Latar belakang putih dengan bayangan daun yang samar di bagian atas untuk suasana fresh
+- Kotak teks putih (white card) di tengah dengan shadow untuk kedalaman
+- Tanda kutip ganda besar berwarna kuning/orange (#FFB84D) di sudut kiri atas kotak teks
+- Coretan kuas (brush strokes) berwarna oranye cerah di belakang kotak teks, menciptakan efek dinamis dan energik
+- Header "QUOTES" dalam font sans-serif tebal, warna hitam
+- Kutipan utama dalam font serif elegan (seperti Playfair Display), ukuran besar (44-52pt), warna hitam
+- Sumber dengan "@" prefix dalam font sans-serif medium (24pt), warna hitam
+- Subtitle (jika ada) dalam font regular (18pt), warna abu-abu gelap
+- Link/watermark di bagian paling bawah dalam font small (16pt), warna abu-abu gelap
+- Komposisi seimbang dengan white space yang cukup
+- Style modern dan fresh dengan sentuhan artistik dari brush strokes
+- Cocok untuk Instagram dan media sosial
+
+CATATAN:
+- Jika [SUBTITLE] kosong, jangan tampilkan bagian subtitle
+- Pastikan semua teks terbaca dengan jelas di atas latar belakang
+- Gunakan tipografi yang konsisten dan profesional
+- Brush strokes harus terlihat natural dan tidak menghalangi keterbacaan teks''',
+      'preview_image_url': null,
+      'is_active': 1,
+      'created_at': now,
+      'updated_at': now,
+    });
+
+    print('Default quote templates initialized successfully');
   }
 }
 

@@ -16,6 +16,7 @@ import 'package:flutter_widget_from_html_core/flutter_widget_from_html_core.dart
 import 'package:url_launcher/url_launcher.dart';
 import 'article_form_page.dart';
 import 'quote_confirmation_page.dart';
+import '../settings/ai_settings_page.dart';
 
 class ArticleDetailPage extends StatefulWidget {
   final ArticleModel article;
@@ -31,8 +32,12 @@ class _ArticleDetailPageState extends State<ArticleDetailPage> {
       _renderDesc; // processed HTML for rendering (e.g., local images -> data URIs)
   ArticleModel? _fullArticle; // Article with full content loaded from DB
   bool _loadingFullArticle = true;
-  String? _cachedApiKey; // Cached API key from SharedPreferences
-  static const String _apiKeyStorageKey = 'openai_api_key';
+  String? _cachedOpenAIKey; // Cached OpenAI API key
+  String? _cachedGeminiKey; // Cached Gemini API key
+  String _selectedAIModel = 'openai'; // Selected AI model
+  static const String _openaiApiKeyKey = 'openai_api_key';
+  static const String _geminiApiKeyKey = 'gemini_api_key';
+  static const String _aiModelKey = 'ai_model_preference';
 
   @override
   void initState() {
@@ -53,10 +58,14 @@ class _ArticleDetailPageState extends State<ArticleDetailPage> {
   Future<void> _loadApiKey() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      final apiKey = prefs.getString(_apiKeyStorageKey);
+      final openaiKey = prefs.getString(_openaiApiKeyKey);
+      final geminiKey = prefs.getString(_geminiApiKeyKey);
+      final aiModel = prefs.getString(_aiModelKey) ?? 'openai';
       if (mounted) {
         setState(() {
-          _cachedApiKey = apiKey;
+          _cachedOpenAIKey = openaiKey;
+          _cachedGeminiKey = geminiKey;
+          _selectedAIModel = aiModel;
         });
       }
     } catch (e) {
@@ -67,10 +76,18 @@ class _ArticleDetailPageState extends State<ArticleDetailPage> {
   Future<void> _saveApiKey(String apiKey) async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setString(_apiKeyStorageKey, apiKey);
-      setState(() {
-        _cachedApiKey = apiKey;
-      });
+      // Save to the appropriate key based on selected model
+      if (_selectedAIModel == 'openai') {
+        await prefs.setString(_openaiApiKeyKey, apiKey);
+        setState(() {
+          _cachedOpenAIKey = apiKey;
+        });
+      } else {
+        await prefs.setString(_geminiApiKeyKey, apiKey);
+        setState(() {
+          _cachedGeminiKey = apiKey;
+        });
+      }
     } catch (e) {
       debugPrint('Error saving API key: $e');
     }
@@ -640,8 +657,15 @@ class _ArticleDetailPageState extends State<ArticleDetailPage> {
       return;
     }
 
+    // Get the appropriate API key based on selected model
+    String? apiKey;
+    if (_selectedAIModel == 'openai') {
+      apiKey = _cachedOpenAIKey;
+    } else if (_selectedAIModel == 'gemini') {
+      apiKey = _cachedGeminiKey;
+    }
+
     // Check if API key is cached, if not show dialog
-    String? apiKey = _cachedApiKey;
     if (apiKey == null || apiKey.trim().isEmpty) {
       apiKey = await _showApiKeyDialog();
       if (apiKey == null || apiKey.trim().isEmpty) {
@@ -658,7 +682,8 @@ class _ArticleDetailPageState extends State<ArticleDetailPage> {
       MaterialPageRoute(
         builder: (_) => QuoteConfirmationPage(
           initialText: selectedText,
-          apiKey: apiKey!, // apiKey is guaranteed non-null here
+          apiKey: apiKey!, // Safe to use ! here after null check
+          aiModel: _selectedAIModel,
         ),
       ),
     );
@@ -773,6 +798,18 @@ class _ArticleDetailPageState extends State<ArticleDetailPage> {
       body: UiScaffold(
         title: 'Detail Artikel',
         actions: [
+          IconButton(
+            tooltip: 'AI Settings',
+            onPressed: () async {
+              await Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const AISettingsPage()),
+              );
+              // Reload settings after returning from settings page
+              await _loadApiKey();
+            },
+            icon: const Icon(Icons.settings),
+          ),
           IconButton(
             tooltip: 'Create Quote Post (dari clipboard)',
             onPressed: _createQuoteFromClipboard,

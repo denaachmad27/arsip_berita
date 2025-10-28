@@ -24,6 +24,7 @@ dependencies:
   palette_generator: ^0.3.3
   shared_preferences: ^2.2.2
   file_picker: ^8.0.6
+  image_picker: ^1.1.2
   flutter_widget_from_html_core: ^0.16.1
   google_sign_in: ^6.2.1
   googleapis: ^13.0.0
