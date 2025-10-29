@@ -47,7 +47,14 @@ class _QuoteTemplateFormPageState extends State<QuoteTemplateFormPage> {
 
     _nameController = TextEditingController(text: template?.name ?? '');
     _descriptionController = TextEditingController(text: template?.description ?? '');
-    _promptController = TextEditingController(text: template?.promptTemplate ?? '');
+    _promptController = TextEditingController(
+      text: template?.promptTemplate ??
+'''TEXT CONTENT:
+- Main Quote: "[QUOTE_TEXT]"
+- Attribution: "- [SOURCE]"
+- Subtitle: "[SUBTITLE]"
+- Watermark: "[LINK]"''',
+    );
     _imageUrlController = TextEditingController(text: template?.previewImageUrl ?? '');
 
     if (template != null) {
@@ -554,7 +561,7 @@ class _QuoteTemplateFormPageState extends State<QuoteTemplateFormPage> {
                 ),
                 maxLines: 15,
                 decoration: InputDecoration(
-                  hintText: 'Masukkan prompt template lengkap...\n\nGunakan placeholder:\n[QUOTE_TEXT] - Isi kutipan\n[SOURCE] - Sumber kutipan\n[SUBTITLE] - Subtitle (opsional)\n[LINK] - Link/watermark (opsional)',
+                  hintText: 'Tambahkan prompt style/design untuk menghasilkan gambar quote...',
                   hintStyle: TextStyle(color: DS.textDim, fontSize: 12),
                   filled: true,
                   fillColor: DS.surface,
