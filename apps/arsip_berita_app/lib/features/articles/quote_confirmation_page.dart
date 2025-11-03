@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
@@ -264,17 +265,16 @@ class _QuoteConfirmationPageState extends State<QuoteConfirmationPage> {
     });
 
     try {
-      // Replace [QUOTE_TEXT] placeholder with actual quote text
-      final finalPrompt = prompt.replaceAll('[QUOTE_TEXT]', text);
-
+      // Prompt already has all placeholders replaced by buildPrompt()
+      // No need to replace [QUOTE_TEXT] again here
       String? imageUrl;
 
       if (widget.aiModel == 'openai') {
         final generator = OpenAIQuoteGenerator(apiKey: widget.apiKey);
-        imageUrl = await generator.generateQuoteImageWithPrompt(finalPrompt);
+        imageUrl = await generator.generateQuoteImageWithPrompt(prompt);
       } else if (widget.aiModel == 'gemini') {
         final generator = GeminiQuoteGenerator(apiKey: widget.apiKey);
-        imageUrl = await generator.generateQuoteImageWithPrompt(finalPrompt);
+        imageUrl = await generator.generateQuoteImageWithPrompt(prompt);
       } else {
         throw Exception('Model AI tidak dikenali: ${widget.aiModel}');
       }
@@ -775,10 +775,30 @@ class _QuoteConfirmationPageState extends State<QuoteConfirmationPage> {
                                             ),
                                             child: Stack(
                                               children: [
-                                                // Preview content representation
-                                                Center(
-                                                  child: _buildTemplatePreview(template),
-                                                ),
+                                                // Preview content - Show actual image if available
+                                                if (template.previewImageUrl != null && template.previewImageUrl!.isNotEmpty)
+                                                  ClipRRect(
+                                                    borderRadius: const BorderRadius.vertical(
+                                                      top: Radius.circular(12),
+                                                    ),
+                                                    child: Image.file(
+                                                      File(template.previewImageUrl!),
+                                                      width: double.infinity,
+                                                      height: 100,
+                                                      fit: BoxFit.cover,
+                                                      errorBuilder: (context, error, stackTrace) {
+                                                        // Fallback to style preview if image fails to load
+                                                        return Center(
+                                                          child: _buildTemplatePreview(template),
+                                                        );
+                                                      },
+                                                    ),
+                                                  )
+                                                else
+                                                  // Fallback: Preview content representation
+                                                  Center(
+                                                    child: _buildTemplatePreview(template),
+                                                  ),
                                                 // Selected indicator overlay
                                                 if (isSelected)
                                                   Positioned(

@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import '../../data/local/db.dart';
 import '../../models/quote_template.dart';
@@ -300,8 +301,8 @@ class _QuoteTemplatesPageState extends State<QuoteTemplatesPage> {
                     child: template.previewImageUrl != null
                         ? ClipRRect(
                             borderRadius: BorderRadius.circular(8),
-                            child: Image.network(
-                              template.previewImageUrl!,
+                            child: Image.file(
+                              File(template.previewImageUrl!),
                               fit: BoxFit.cover,
                               errorBuilder: (_, __, ___) => Icon(
                                 Icons.image_outlined,
