@@ -29,7 +29,21 @@ Future<void> deleteIfExists(String path) async {
 
 Widget? imageFromPath(String path, {double? width, double? height, BoxFit fit = BoxFit.cover}) {
   try {
-    return Image.file(File(path), width: width, height: height, fit: fit);
+    final file = File(path);
+    // Check if file exists before trying to load it
+    if (!file.existsSync()) {
+      return null;
+    }
+    return Image.file(
+      file,
+      width: width,
+      height: height,
+      fit: fit,
+      errorBuilder: (context, error, stackTrace) {
+        // Return null if image fails to load, which will be handled by the caller
+        return const SizedBox.shrink();
+      },
+    );
   } catch (_) {
     return null;
   }

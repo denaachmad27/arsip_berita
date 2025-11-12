@@ -875,12 +875,21 @@ class _ArticleDetailPageState extends State<ArticleDetailPage> {
                         width: double.infinity, height: 180, fit: BoxFit.cover);
                     if (w == null) return const SizedBox.shrink();
 
-                    // Get ImageProvider for preview
-                    final ImageProvider imageProvider;
-                    if (a.imagePath!.startsWith('http')) {
-                      imageProvider = NetworkImage(a.imagePath!);
-                    } else {
-                      imageProvider = FileImage(File(a.imagePath!));
+                    // Get ImageProvider for preview with error handling
+                    late ImageProvider imageProvider;
+                    try {
+                      if (a.imagePath!.startsWith('http')) {
+                        imageProvider = NetworkImage(a.imagePath!);
+                      } else {
+                        final file = File(a.imagePath!);
+                        if (!file.existsSync()) {
+                          return const SizedBox.shrink();
+                        }
+                        imageProvider = FileImage(file);
+                      }
+                    } catch (e) {
+                      // If we can't create the ImageProvider, return empty space
+                      return const SizedBox.shrink();
                     }
 
                     return GestureDetector(

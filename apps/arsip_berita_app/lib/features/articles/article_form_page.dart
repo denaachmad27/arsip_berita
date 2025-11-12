@@ -20,6 +20,7 @@ import '../../widgets/ui_button.dart';
 import '../../widgets/ui_input.dart';
 import '../../widgets/ui_scaffold.dart';
 import '../../widgets/ui_toast.dart';
+import '../../widgets/ai_summarizer_dialog.dart';
 
 class _ResizableImage extends StatefulWidget {
   final String imageUrl;
@@ -1865,14 +1866,28 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
               ),
             )
           else if ((_imagePath ?? '').isNotEmpty)
-            ClipRRect(
-              borderRadius: BorderRadius.circular(12),
-              child: imageFromPath(
-                _imagePath!,
-                height: 200,
-                width: double.infinity,
-                fit: BoxFit.cover,
-              ),
+            Builder(
+              builder: (context) {
+                final image = imageFromPath(
+                  _imagePath!,
+                  height: 200,
+                  width: double.infinity,
+                  fit: BoxFit.cover,
+                );
+                if (image == null) {
+                  return Text(
+                    'Gambar tidak ditemukan',
+                    style: Theme.of(context)
+                        .textTheme
+                        .bodySmall
+                        ?.copyWith(color: DS.textDim),
+                  );
+                }
+                return ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: image,
+                );
+              },
             )
           else
             Text(
@@ -2135,6 +2150,15 @@ class _CompactQuillToolbarState extends State<_CompactQuillToolbar> {
     setState(() {});
   }
 
+  void _showAISummarizer() {
+    showDialog(
+      context: context,
+      builder: (context) => AISummarizerDialog(
+        controller: widget.controller,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final row1Buttons = [
@@ -2162,6 +2186,11 @@ class _CompactQuillToolbarState extends State<_CompactQuillToolbar> {
         icon: Icons.image_outlined,
         tooltip: 'Sisipkan gambar',
         onPressed: widget.onInsertImage,
+      ),
+      _buildToolbarButton(
+        icon: Icons.auto_awesome_outlined,
+        tooltip: 'Summarize by AI',
+        onPressed: _showAISummarizer,
       ),
       PopupMenuButton<String>(
         tooltip: 'Warna Teks',

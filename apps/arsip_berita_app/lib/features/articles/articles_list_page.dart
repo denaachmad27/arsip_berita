@@ -17,6 +17,7 @@ import '../../widgets/ui_list_item.dart';
 import 'article_form_page.dart';
 import 'article_detail_page.dart';
 import 'database_info_dialog.dart';
+import '../settings/ai_settings_page.dart';
 
 class ArticlesListPage extends StatefulWidget {
   const ArticlesListPage({super.key});
@@ -534,6 +535,17 @@ class _ArticlesListPageState extends State<ArticlesListPage> {
                 ),
               ),
             ],
+          ),
+          const SizedBox(width: Spacing.sm),
+          IconButton(
+            tooltip: 'Pengaturan AI',
+            icon: const Icon(Icons.auto_awesome_outlined),
+            onPressed: () async {
+              await Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const AISettingsPage()),
+              );
+            },
           ),
           const SizedBox(width: Spacing.sm),
           UiButton(
