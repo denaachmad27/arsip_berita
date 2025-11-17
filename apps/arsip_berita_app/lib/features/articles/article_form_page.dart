@@ -800,16 +800,8 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
 
   Widget _buildImageWidthPanel(BuildContext context) {
     if (_documentImages.isEmpty) {
-      return Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-        child: Text(
-          'Belum ada gambar di konten. Gunakan tombol gambar pada toolbar untuk menambahkan.',
-          style: Theme.of(context)
-              .textTheme
-              .bodySmall
-              ?.copyWith(color: DS.textDim),
-        ),
-      );
+      // Sembunyikan panel sama sekali jika tidak ada gambar
+      return const SizedBox.shrink();
     }
     final selected = _selectedImageSrc ?? _documentImages.first;
     final widthValue =

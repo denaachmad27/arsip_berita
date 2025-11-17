@@ -47,6 +47,9 @@ class _ArticlesListPageState extends State<ArticlesListPage> {
   bool _isLoadingMore = false;
   bool _hasMore = true;
 
+  // View toggle
+  bool _isGridView = false;
+
   @override
   void initState() {
     super.initState();
@@ -581,7 +584,7 @@ class _ArticlesListPageState extends State<ArticlesListPage> {
           const SizedBox(height: Spacing.md),
           LayoutBuilder(builder: (context, constraints) {
             final w = constraints.maxWidth;
-            final isNarrow = w < 520;
+            final isNarrow = w < 600;
             if (isNarrow) {
               return Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -592,43 +595,7 @@ class _ArticlesListPageState extends State<ArticlesListPage> {
                           setState(() => _mediaType = v);
                           _search();
                         }),
-                    const SizedBox(height: Spacing.sm),
-                    _DateRangeInput(
-                      label: _startDate == null && _endDate == null
-                          ? 'Rentang Tanggal'
-                          : '${_startDate!.toIso8601String().substring(0, 10)} - ${_endDate!.toIso8601String().substring(0, 10)}',
-                      hasValue: _startDate != null || _endDate != null,
-                      onPick: () async {
-                        final now = DateTime.now();
-                        final range = await showDateRangePicker(
-                          context: context,
-                          firstDate: DateTime(1990),
-                          lastDate: DateTime(now.year + 1),
-                          initialDateRange:
-                              _startDate == null && _endDate == null
-                                  ? null
-                                  : DateTimeRange(
-                                      start: _startDate ??
-                                          now.subtract(const Duration(days: 7)),
-                                      end: _endDate ?? now),
-                        );
-                        if (range != null) {
-                          setState(() {
-                            _startDate = range.start;
-                            _endDate = range.end;
-                          });
-                          _search();
-                        }
-                      },
-                      onClear: () {
-                        setState(() {
-                          _startDate = null;
-                          _endDate = null;
-                        });
-                        _search();
-                      },
-                    ),
-                    const SizedBox(height: Spacing.sm),
+                      const SizedBox(height: Spacing.sm),
                     Row(
                       children: [
                         Expanded(
@@ -655,6 +622,65 @@ class _ArticlesListPageState extends State<ArticlesListPage> {
                           ),
                         ),
                         const SizedBox(width: Spacing.sm),
+                        // Date Range Icon Button for narrow screen
+                        InkWell(
+                          onTap: () async {
+                            final now = DateTime.now();
+                            final range = await showDateRangePicker(
+                              context: context,
+                              firstDate: DateTime(1990),
+                              lastDate: DateTime(now.year + 1),
+                              initialDateRange:
+                                  _startDate == null && _endDate == null
+                                      ? null
+                                      : DateTimeRange(
+                                          start: _startDate ??
+                                              now.subtract(const Duration(days: 7)),
+                                          end: _endDate ?? now),
+                            );
+                            if (range != null) {
+                              setState(() {
+                                _startDate = range.start;
+                                _endDate = range.end;
+                              });
+                              _search();
+                            }
+                          },
+                          borderRadius: BorderRadius.circular(12),
+                          child: Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: (_startDate != null || _endDate != null)
+                                  ? DS.accent.withValues(alpha: 0.1)
+                                  : DS.surface,
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: DS.border),
+                            ),
+                            child: Column(
+                              children: [
+                                Icon(
+                                  Icons.date_range,
+                                  size: 20,
+                                  color: (_startDate != null || _endDate != null)
+                                      ? DS.accent
+                                      : DS.textDim,
+                                ),
+                                if (_startDate != null || _endDate != null) ...[
+                                  const SizedBox(height: 2),
+                                  Container(
+                                    width: 6,
+                                    height: 6,
+                                    decoration: BoxDecoration(
+                                      color: DS.accent,
+                                      borderRadius: BorderRadius.circular(3),
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: Spacing.sm),
                         UiButton(
                           label: 'Cari',
                           icon: Icons.search,
@@ -677,42 +703,87 @@ class _ArticlesListPageState extends State<ArticlesListPage> {
                               _search();
                             })),
                     const SizedBox(width: Spacing.sm),
+                    // Date Range Button for wide screen
                     Expanded(
-                        child: _DateRangeInput(
-                      label: _startDate == null && _endDate == null
-                          ? 'Rentang Tanggal'
-                          : '${_startDate!.toIso8601String().substring(0, 10)} - ${_endDate!.toIso8601String().substring(0, 10)}',
-                      hasValue: _startDate != null || _endDate != null,
-                      onPick: () async {
-                        final now = DateTime.now();
-                        final range = await showDateRangePicker(
-                          context: context,
-                          firstDate: DateTime(1990),
-                          lastDate: DateTime(now.year + 1),
-                          initialDateRange:
-                              _startDate == null && _endDate == null
-                                  ? null
-                                  : DateTimeRange(
-                                      start: _startDate ??
-                                          now.subtract(const Duration(days: 7)),
-                                      end: _endDate ?? now),
-                        );
-                        if (range != null) {
-                          setState(() {
-                            _startDate = range.start;
-                            _endDate = range.end;
-                          });
-                          _search();
-                        }
-                      },
-                      onClear: () {
-                        setState(() {
-                          _startDate = null;
-                          _endDate = null;
-                        });
-                        _search();
-                      },
-                    )),
+                        child: InkWell(
+                          onTap: () async {
+                            final now = DateTime.now();
+                            final range = await showDateRangePicker(
+                              context: context,
+                              firstDate: DateTime(1990),
+                              lastDate: DateTime(now.year + 1),
+                              initialDateRange:
+                                  _startDate == null && _endDate == null
+                                      ? null
+                                      : DateTimeRange(
+                                          start: _startDate ??
+                                              now.subtract(const Duration(days: 7)),
+                                          end: _endDate ?? now),
+                            );
+                            if (range != null) {
+                              setState(() {
+                                _startDate = range.start;
+                                _endDate = range.end;
+                              });
+                              _search();
+                            }
+                          },
+                          borderRadius: BorderRadius.circular(12),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                            decoration: BoxDecoration(
+                              color: (_startDate != null || _endDate != null)
+                                  ? DS.accent.withValues(alpha: 0.1)
+                                  : DS.surface,
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: DS.border),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  Icons.date_range,
+                                  size: 20,
+                                  color: (_startDate != null || _endDate != null)
+                                      ? DS.accent
+                                      : DS.textDim,
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    _startDate == null && _endDate == null
+                                        ? 'Rentang Tanggal'
+                                        : '${_startDate!.toIso8601String().substring(0, 10)} - ${_endDate!.toIso8601String().substring(0, 10)}',
+                                    style: TextStyle(
+                                      color: (_startDate != null || _endDate != null)
+                                          ? DS.accent
+                                          : DS.text,
+                                      fontSize: 14,
+                                    ),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                                if (_startDate != null || _endDate != null) ...[
+                                  const SizedBox(width: 8),
+                                  InkWell(
+                                    onTap: () {
+                                      setState(() {
+                                        _startDate = null;
+                                        _endDate = null;
+                                      });
+                                      _search();
+                                    },
+                                    borderRadius: BorderRadius.circular(10),
+                                    child: const Padding(
+                                      padding: EdgeInsets.all(4),
+                                      child: Icon(Icons.close, size: 18),
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ),
+                        ),
+                    ),
                   ]),
                   const SizedBox(height: Spacing.sm),
                   Row(
@@ -741,6 +812,65 @@ class _ArticlesListPageState extends State<ArticlesListPage> {
                         ),
                       ),
                       const SizedBox(width: Spacing.sm),
+                      // Date Range Button
+                      InkWell(
+                        onTap: () async {
+                          final now = DateTime.now();
+                          final range = await showDateRangePicker(
+                            context: context,
+                            firstDate: DateTime(1990),
+                            lastDate: DateTime(now.year + 1),
+                            initialDateRange:
+                                _startDate == null && _endDate == null
+                                    ? null
+                                    : DateTimeRange(
+                                        start: _startDate ??
+                                            now.subtract(const Duration(days: 7)),
+                                        end: _endDate ?? now),
+                          );
+                          if (range != null) {
+                            setState(() {
+                              _startDate = range.start;
+                              _endDate = range.end;
+                            });
+                            _search();
+                          }
+                        },
+                        borderRadius: BorderRadius.circular(12),
+                        child: Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: (_startDate != null || _endDate != null)
+                                ? DS.accent.withValues(alpha: 0.1)
+                                : DS.surface,
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: DS.border),
+                          ),
+                          child: Column(
+                            children: [
+                              Icon(
+                                Icons.date_range,
+                                size: 20,
+                                color: (_startDate != null || _endDate != null)
+                                    ? DS.accent
+                                    : DS.textDim,
+                              ),
+                              if (_startDate != null || _endDate != null) ...[
+                                const SizedBox(height: 2),
+                                Container(
+                                  width: 6,
+                                  height: 6,
+                                  decoration: BoxDecoration(
+                                    color: DS.accent,
+                                    borderRadius: BorderRadius.circular(3),
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: Spacing.sm),
                       UiButton(
                         label: 'Cari',
                         icon: Icons.search,
@@ -750,6 +880,93 @@ class _ArticlesListPageState extends State<ArticlesListPage> {
                   ),
                 ]);
           }),
+          const SizedBox(height: Spacing.md),
+
+          // Toggle View Buttons
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+            decoration: BoxDecoration(
+              color: DS.surface,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: DS.border),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: InkWell(
+                    onTap: () {
+                      setState(() {
+                        _isGridView = false;
+                      });
+                    },
+                    borderRadius: BorderRadius.circular(8),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      decoration: BoxDecoration(
+                        color: !_isGridView ? DS.accent.withValues(alpha: 0.1) : Colors.transparent,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.view_list,
+                            size: 18,
+                            color: !_isGridView ? DS.accent : DS.textDim,
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            'Daftar',
+                            style: TextStyle(
+                              color: !_isGridView ? DS.accent : DS.textDim,
+                              fontWeight: !_isGridView ? FontWeight.w600 : FontWeight.normal,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: InkWell(
+                    onTap: () {
+                      setState(() {
+                        _isGridView = true;
+                      });
+                    },
+                    borderRadius: BorderRadius.circular(8),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      decoration: BoxDecoration(
+                        color: _isGridView ? DS.accent.withValues(alpha: 0.1) : Colors.transparent,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.grid_view,
+                            size: 18,
+                            color: _isGridView ? DS.accent : DS.textDim,
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            'Grid',
+                            style: TextStyle(
+                              color: _isGridView ? DS.accent : DS.textDim,
+                              fontWeight: _isGridView ? FontWeight.w600 : FontWeight.normal,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+
           const SizedBox(height: Spacing.md),
           Expanded(
             child: RefreshIndicator(
@@ -779,150 +996,323 @@ class _ArticlesListPageState extends State<ArticlesListPage> {
                         ),
                       ],
                     )
-                  : ListView.separated(
-                      controller: _scrollController,
-                      itemCount: _results.length + (_hasMore || _isLoadingMore ? 1 : 0),
-                      separatorBuilder: (_, __) =>
-                          const SizedBox(height: Spacing.sm),
-                      itemBuilder: (ctx, i) {
-                        // Load More button or loading indicator at the end
-                        if (i == _results.length) {
-                          if (_isLoadingMore) {
-                            return Padding(
-                              padding: const EdgeInsets.symmetric(vertical: 24),
-                              child: Center(
-                                child: Column(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    SizedBox(
-                                      width: 24,
-                                      height: 24,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2.5,
-                                        valueColor: AlwaysStoppedAnimation<Color>(
-                                            DS.accent),
-                                      ),
-                                    ),
-                                    const SizedBox(height: 12),
-                                    Text(
-                                      'Memuat artikel...',
-                                      style: Theme.of(context)
-                                          .textTheme
-                                          .bodySmall
-                                          ?.copyWith(color: DS.textDim),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            );
-                          }
-
-                          // Show Load More button if there's more data
-                          if (_hasMore) {
-                            return Padding(
-                              padding: const EdgeInsets.symmetric(vertical: 16),
-                              child: Center(
-                                child: UiButton(
-                                  label: 'Muat Lebih Banyak',
-                                  icon: Icons.refresh,
-                                  onPressed: _loadMore,
-                                ),
-                              ),
-                            );
-                          }
-
-                          return const SizedBox.shrink();
-                        }
-
-                        final a = _results[i].article;
-                        final m = _results[i].medium;
-                        final type = m?.type;
-                        final ac = (type == 'online' || type == 'tv')
-                            ? DS.accent
-                            : DS.accent2;
-                        Widget? thumb = (a.imagePath ?? '').isNotEmpty
-                            ? imageFromPath(a.imagePath!,
-                                width: 56, height: 56, fit: BoxFit.cover)
-                            : null;
-                        return FutureBuilder<List<String>>(
-                          future: _db.authorsForArticle(a.id),
-                          builder: (context, snapshot) {
-                            final authors = snapshot.data ?? const <String>[];
-                            final subtitle =
-                                authors.isEmpty ? '-' : authors.join(', ');
-                            final displayTitle = a.title.isEmpty ? '(Tanpa judul)' : a.title;
-                            return UiListItem(
-                              title: displayTitle,
-                              subtitle: subtitle,
-                              accentColor: ac,
-                              leading: thumb,
-                              onTap: () async {
-                                await Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (_) => ArticleDetailPage(article: a)
-                                  )
-                                );
-                                // Refresh data setelah kembali dari detail
-                                await _search();
-                              },
-                            );
-                          },
-                        );
-                      },
-                    ),
+                  : _isGridView
+                      ? _buildGridView()
+                      : _buildListView(),
             ),
           ),
         ])),
       ),
     );
   }
-}
 
-class _DateRangeInput extends StatelessWidget {
-  final String label;
-  final bool hasValue;
-  final VoidCallback onPick;
-  final VoidCallback onClear;
-  const _DateRangeInput(
-      {required this.label,
-      required this.hasValue,
-      required this.onPick,
-      required this.onClear});
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onPick,
-      borderRadius: BorderRadius.circular(12),
-      child: Container(
-        decoration: BoxDecoration(
-          color: DS.surface,
-          borderRadius: DS.br,
-          border: Border.all(color: DS.border),
-        ),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-        child: Row(children: [
-          const Icon(Icons.event),
-          const SizedBox(width: 8),
-          Expanded(child: Text(label)),
-          if (hasValue) ...[
-            const SizedBox(width: 8),
-            InkWell(
-              onTap: () {
-                onClear();
-              },
-              borderRadius: BorderRadius.circular(10),
-              child: const Padding(
-                padding: EdgeInsets.all(4),
-                child: Icon(Icons.close, size: 18),
+  // Method untuk membangun list view
+  Widget _buildListView() {
+    return ListView.separated(
+      controller: _scrollController,
+      itemCount: _results.length + (_hasMore || _isLoadingMore ? 1 : 0),
+      separatorBuilder: (_, __) => const SizedBox(height: Spacing.sm),
+      itemBuilder: (ctx, i) {
+        // Load More button or loading indicator at the end
+        if (i == _results.length) {
+          if (_isLoadingMore) {
+            return Padding(
+              padding: const EdgeInsets.symmetric(vertical: 24),
+              child: Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    SizedBox(
+                      width: 24,
+                      height: 24,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2.5,
+                        valueColor: AlwaysStoppedAnimation<Color>(DS.accent),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      'Memuat artikel...',
+                      style: Theme.of(context)
+                          .textTheme
+                          .bodySmall
+                          ?.copyWith(color: DS.textDim),
+                    ),
+                  ],
+                ),
               ),
-            ),
-          ],
-        ]),
-      ),
+            );
+          }
+
+          // Show Load More button if there's more data
+          if (_hasMore) {
+            return Padding(
+              padding: const EdgeInsets.symmetric(vertical: 16),
+              child: Center(
+                child: UiButton(
+                  label: 'Muat Lebih Banyak',
+                  icon: Icons.refresh,
+                  onPressed: _loadMore,
+                ),
+              ),
+            );
+          }
+
+          return const SizedBox.shrink();
+        }
+
+        final a = _results[i].article;
+        final m = _results[i].medium;
+        final type = m?.type;
+        final ac = (type == 'online' || type == 'tv') ? DS.accent : DS.accent2;
+        Widget? thumb = (a.imagePath ?? '').isNotEmpty
+            ? imageFromPath(a.imagePath!, width: 56, height: 56, fit: BoxFit.cover)
+            : null;
+        return FutureBuilder<List<String>>(
+          future: _db.authorsForArticle(a.id),
+          builder: (context, snapshot) {
+            final authors = snapshot.data ?? const <String>[];
+            final displayTitle = a.title.isEmpty ? '(Tanpa judul)' : a.title;
+
+            // Buat subtitle yang lebih informatif
+            String subtitle;
+            if (authors.isNotEmpty) {
+              subtitle = authors.join(', ');
+            } else if (m?.name.isNotEmpty == true) {
+              subtitle = m!.name;
+            } else {
+              subtitle = 'Tidak ada penulis';
+            }
+
+            return UiListItem(
+              title: displayTitle,
+              subtitle: subtitle,
+              accentColor: ac,
+              leading: thumb,
+              onTap: () async {
+                await Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => ArticleDetailPage(article: a)
+                  )
+                );
+                // Refresh data setelah kembali dari detail
+                await _search();
+              },
+            );
+          },
+        );
+      },
     );
   }
+
+  // Method untuk membangun grid view
+  Widget _buildGridView() {
+    return CustomScrollView(
+      controller: _scrollController,
+      slivers: [
+        SliverPadding(
+          padding: const EdgeInsets.all(4),
+          sliver: SliverGrid(
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 2,
+              childAspectRatio: 0.8,
+              crossAxisSpacing: 8,
+              mainAxisSpacing: 8,
+            ),
+            delegate: SliverChildBuilderDelegate(
+              (context, index) {
+                // Handle load more
+                if (index == _results.length) {
+                  if (_isLoadingMore) {
+                    return const Padding(
+                      padding: EdgeInsets.all(16),
+                      child: Center(
+                        child: CircularProgressIndicator(),
+                      ),
+                    );
+                  }
+
+                  if (_hasMore) {
+                    return Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Center(
+                        child: UiButton(
+                          label: 'Muat Lebih Banyak',
+                          icon: Icons.refresh,
+                          onPressed: _loadMore,
+                        ),
+                      ),
+                    );
+                  }
+
+                  return const SizedBox.shrink();
+                }
+
+                return _buildArticleGridItem(_results[index]);
+              },
+              childCount: _results.length + (_hasMore || _isLoadingMore ? 1 : 0),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  // Method untuk membangun grid item
+  Widget _buildArticleGridItem(ArticleWithMedium articleWithMedium) {
+    final a = articleWithMedium.article;
+    final m = articleWithMedium.medium;
+    final type = m?.type;
+    final ac = (type == 'online' || type == 'tv') ? DS.accent : DS.accent2;
+
+    return FutureBuilder<List<String>>(
+      future: _db.authorsForArticle(a.id),
+      builder: (context, snapshot) {
+        final authors = snapshot.data ?? const <String>[];
+        final displayTitle = a.title.isEmpty ? '(Tanpa judul)' : a.title;
+
+        // Buat subtitle yang lebih informatif
+        String subtitle;
+        if (authors.isNotEmpty) {
+          subtitle = authors.join(', ');
+        } else if (m?.name.isNotEmpty == true) {
+          subtitle = m!.name;
+        } else {
+          subtitle = 'Tidak ada penulis';
+        }
+
+        Widget? thumbnail = (a.imagePath ?? '').isNotEmpty
+            ? imageFromPath(a.imagePath!,
+                width: double.infinity, height: 120, fit: BoxFit.cover)
+            : null;
+
+        return Card(
+          elevation: 2,
+          margin: const EdgeInsets.all(4),
+          child: InkWell(
+            onTap: () async {
+              await Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => ArticleDetailPage(article: a)
+                )
+              );
+              await _search();
+            },
+            borderRadius: BorderRadius.circular(8),
+            child: Container(
+              constraints: const BoxConstraints(maxHeight: 200),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Image section
+                  if (thumbnail != null) ...[
+                    Expanded(
+                      flex: 3,
+                      child: ClipRRect(
+                        borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
+                        child: thumbnail,
+                      ),
+                    ),
+                  ] else ...[
+                    Expanded(
+                      flex: 3,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: DS.surface,
+                          borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
+                          border: Border.all(color: DS.border),
+                        ),
+                        child: Center(
+                          child: Icon(
+                            Icons.article_outlined,
+                            size: 48,
+                            color: DS.textDim,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                  // Content section
+                  Expanded(
+                    flex: 2,
+                    child: Padding(
+                      padding: const EdgeInsets.all(8),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // Title
+                          Text(
+                            displayTitle,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontWeight: FontWeight.w600,
+                              fontSize: 14,
+                              color: DS.text,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          // Subtitle
+                          Text(
+                            subtitle,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: DS.textDim,
+                            ),
+                          ),
+                          const Spacer(),
+                          // Media type indicator
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: ac.withValues(alpha: 0.1),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Text(
+                              _getMediaDisplay(type),
+                              style: TextStyle(
+                                fontSize: 10,
+                                color: ac,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  // Helper method untuk mendapatkan display media type
+  String _getMediaDisplay(String? type) {
+    switch (type) {
+      case 'online':
+        return 'Online';
+      case 'print':
+        return 'Cetak';
+      case 'tv':
+        return 'TV';
+      case 'radio':
+        return 'Radio';
+      case 'social':
+        return 'Sosial';
+      default:
+        return 'Media';
+    }
+  }
 }
+
 
 class _MediaChips extends StatelessWidget {
   final String? value;
