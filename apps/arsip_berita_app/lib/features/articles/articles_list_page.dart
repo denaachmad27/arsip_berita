@@ -1089,6 +1089,9 @@ class _ArticlesListPageState extends State<ArticlesListPage> {
               subtitle: subtitle,
               accentColor: ac,
               leading: thumb,
+              authors: authors.isNotEmpty ? authors : null,
+              mediaName: m?.name,
+              publishedAt: a.publishedAt,
               onTap: () async {
                 await Navigator.push(
                   context,
@@ -1258,22 +1261,37 @@ class _ArticlesListPageState extends State<ArticlesListPage> {
                           ),
                         ),
                         const Spacer(),
-                        // Media type indicator
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: ac.withValues(alpha: 0.1),
-                            borderRadius: BorderRadius.circular(8),
+                        // Chips section
+                        if (authors.isNotEmpty || m?.name.isNotEmpty == true) ...[
+                          Wrap(
+                            spacing: 4,
+                            runSpacing: 2,
+                            children: [
+                              // Author chips (max 2)
+                              ...authors.take(1).map((author) => _buildAuthorChipGrid(author)),
+                              // Media name chip
+                              if (m?.name.isNotEmpty == true)
+                                _buildMediaChipGrid(m!.name),
+                            ],
                           ),
-                          child: Text(
-                            _getMediaDisplay(type),
-                            style: TextStyle(
-                              fontSize: 10,
-                              color: ac,
-                              fontWeight: FontWeight.w500,
+                        ] else ...[
+                          // Media type indicator as fallback
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: ac.withValues(alpha: 0.1),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Text(
+                              _getMediaDisplay(type),
+                              style: TextStyle(
+                                fontSize: 10,
+                                color: ac,
+                                fontWeight: FontWeight.w500,
+                              ),
                             ),
                           ),
-                        ),
+                        ],
                       ],
                     ),
                   ),
@@ -1302,6 +1320,70 @@ class _ArticlesListPageState extends State<ArticlesListPage> {
       default:
         return 'Media';
     }
+  }
+
+  // Helper method untuk author chip di grid
+  Widget _buildAuthorChipGrid(String author) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+      decoration: BoxDecoration(
+        color: Colors.blue.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.person_outline,
+            size: 10,
+            color: Colors.blue[700],
+          ),
+          const SizedBox(width: 2),
+          Text(
+            author,
+            style: TextStyle(
+              color: Colors.blue[700],
+              fontSize: 8,
+              fontWeight: FontWeight.w600,
+            ),
+            overflow: TextOverflow.ellipsis,
+            maxLines: 1,
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Helper method untuk media chip di grid
+  Widget _buildMediaChipGrid(String mediaName) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+      decoration: BoxDecoration(
+        color: Colors.green.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.business,
+            size: 10,
+            color: Colors.green[700],
+          ),
+          const SizedBox(width: 2),
+          Text(
+            mediaName,
+            style: TextStyle(
+              color: Colors.green[700],
+              fontSize: 8,
+              fontWeight: FontWeight.w600,
+            ),
+            overflow: TextOverflow.ellipsis,
+            maxLines: 1,
+          ),
+        ],
+      ),
+    );
   }
 }
 
