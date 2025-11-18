@@ -1239,7 +1239,7 @@ class _ArticlesListPageState extends State<ArticlesListPage> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        // Title
+                        // Title - uniform spacing
                         Text(
                           displayTitle,
                           maxLines: 1,
@@ -1250,8 +1250,8 @@ class _ArticlesListPageState extends State<ArticlesListPage> {
                             color: DS.text,
                           ),
                         ),
-                        const SizedBox(height: 4),
-                        // Date (instead of subtitle)
+                        const SizedBox(height: 6),
+                        // Date - uniform spacing
                         if (a.publishedAt != null)
                           Text(
                             _formatDate(a.publishedAt!),
@@ -1273,21 +1273,21 @@ class _ArticlesListPageState extends State<ArticlesListPage> {
                             ),
                           ),
                         const Spacer(),
-                        // Chips section - 2 separate rows
+                        // Chips section - 2 separate rows with better spacing
                         if (authors.isNotEmpty || m?.name.isNotEmpty == true) ...[
                           // Baris 1: Author chips
                           if (authors.isNotEmpty)
                             Wrap(
-                              spacing: 4,
-                              runSpacing: 2,
+                              spacing: 6, // Increased from 4 to 6
+                              runSpacing: 4, // Increased from 2 to 4
                               children: authors
                                   .take(2)
                                   .map((author) => _buildAuthorChipGrid(author))
                                   .toList(),
                             ),
-                          // Baris 2: Media chip
+                          // Baris 2: Media chip with uniform spacing
                           if (m?.name.isNotEmpty == true) ...[
-                            const SizedBox(height: 2),
+                            const SizedBox(height: 6), // Increased from 2 to 6
                             _buildMediaChipGrid(m!.name),
                           ],
                         ] else ...[
@@ -1351,6 +1351,9 @@ class _ArticlesListPageState extends State<ArticlesListPage> {
   // Helper method untuk author chip di grid
   Widget _buildAuthorChipGrid(String author) {
     return Container(
+      constraints: BoxConstraints(
+        maxWidth: 100, // Diperkecil untuk mencegah tumpang tindih
+      ),
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
       decoration: BoxDecoration(
         color: Colors.blue.withValues(alpha: 0.1),
@@ -1365,15 +1368,17 @@ class _ArticlesListPageState extends State<ArticlesListPage> {
             color: Colors.blue[700],
           ),
           const SizedBox(width: 3),
-          Text(
-            author,
-            style: TextStyle(
-              color: Colors.blue[700],
-              fontSize: 10,
-              fontWeight: FontWeight.w600,
+          Flexible(
+            child: Text(
+              author,
+              style: TextStyle(
+                color: Colors.blue[700],
+                fontSize: 10,
+                fontWeight: FontWeight.w600,
+              ),
+              overflow: TextOverflow.ellipsis,
+              maxLines: 1,
             ),
-            overflow: TextOverflow.ellipsis,
-            maxLines: 1,
           ),
         ],
       ),
@@ -1383,6 +1388,9 @@ class _ArticlesListPageState extends State<ArticlesListPage> {
   // Helper method untuk media chip di grid
   Widget _buildMediaChipGrid(String mediaName) {
     return Container(
+      constraints: BoxConstraints(
+        maxWidth: 100, // Diperkecil untuk mencegah tumpang tindih
+      ),
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
       decoration: BoxDecoration(
         color: Colors.green.withValues(alpha: 0.1),
@@ -1397,15 +1405,17 @@ class _ArticlesListPageState extends State<ArticlesListPage> {
             color: Colors.green[700],
           ),
           const SizedBox(width: 3),
-          Text(
-            mediaName,
-            style: TextStyle(
-              color: Colors.green[700],
-              fontSize: 10,
-              fontWeight: FontWeight.w600,
+          Flexible(
+            child: Text(
+              mediaName,
+              style: TextStyle(
+                color: Colors.green[700],
+                fontSize: 10,
+                fontWeight: FontWeight.w600,
+              ),
+              overflow: TextOverflow.ellipsis,
+              maxLines: 1,
             ),
-            overflow: TextOverflow.ellipsis,
-            maxLines: 1,
           ),
         ],
       ),
