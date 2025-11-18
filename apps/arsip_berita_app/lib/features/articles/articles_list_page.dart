@@ -1175,16 +1175,6 @@ class _ArticlesListPageState extends State<ArticlesListPage> {
         final authors = snapshot.data ?? const <String>[];
         final displayTitle = a.title.isEmpty ? '(Tanpa judul)' : a.title;
 
-        // Buat subtitle yang lebih informatif
-        String subtitle;
-        if (authors.isNotEmpty) {
-          subtitle = authors.join(', ');
-        } else if (m?.name.isNotEmpty == true) {
-          subtitle = m!.name;
-        } else {
-          subtitle = 'Tidak ada penulis';
-        }
-
         Widget? thumbnail = (a.imagePath ?? '').isNotEmpty
             ? imageFromPath(a.imagePath!,
                 width: double.infinity, height: 120, fit: BoxFit.cover)
@@ -1250,30 +1240,45 @@ class _ArticlesListPageState extends State<ArticlesListPage> {
                           ),
                         ),
                         const SizedBox(height: 4),
-                        // Subtitle
-                        Text(
-                          subtitle,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: DS.textDim,
+                        // Date (instead of subtitle)
+                        if (a.publishedAt != null)
+                          Text(
+                            _formatDate(a.publishedAt!),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: DS.textDim,
+                            ),
+                          )
+                        else
+                          Text(
+                            _getMediaDisplay(type),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: DS.textDim,
+                            ),
                           ),
-                        ),
                         const Spacer(),
-                        // Chips section
+                        // Chips section - 2 separate rows
                         if (authors.isNotEmpty || m?.name.isNotEmpty == true) ...[
-                          Wrap(
-                            spacing: 4,
-                            runSpacing: 2,
-                            children: [
-                              // Author chips (max 2)
-                              ...authors.take(1).map((author) => _buildAuthorChipGrid(author)),
-                              // Media name chip
-                              if (m?.name.isNotEmpty == true)
-                                _buildMediaChipGrid(m!.name),
-                            ],
-                          ),
+                          // Baris 1: Author chips
+                          if (authors.isNotEmpty)
+                            Wrap(
+                              spacing: 4,
+                              runSpacing: 2,
+                              children: authors
+                                  .take(2)
+                                  .map((author) => _buildAuthorChipGrid(author))
+                                  .toList(),
+                            ),
+                          // Baris 2: Media chip
+                          if (m?.name.isNotEmpty == true) ...[
+                            const SizedBox(height: 2),
+                            _buildMediaChipGrid(m!.name),
+                          ],
                         ] else ...[
                           // Media type indicator as fallback
                           Container(
@@ -1304,6 +1309,16 @@ class _ArticlesListPageState extends State<ArticlesListPage> {
     );
   }
 
+  // Helper method untuk format tanggal
+  String _formatDate(DateTime date) {
+    // Format tanggal: dd MMM yyyy (contoh: 18 Nov 2025)
+    const months = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun',
+      'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'
+    ];
+    return '${date.day.toString().padLeft(2, '0')} ${months[date.month - 1]} ${date.year}';
+  }
+
   // Helper method untuk mendapatkan display media type
   String _getMediaDisplay(String? type) {
     switch (type) {
@@ -1325,25 +1340,25 @@ class _ArticlesListPageState extends State<ArticlesListPage> {
   // Helper method untuk author chip di grid
   Widget _buildAuthorChipGrid(String author) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
       decoration: BoxDecoration(
         color: Colors.blue.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(10),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(
             Icons.person_outline,
-            size: 10,
+            size: 12,
             color: Colors.blue[700],
           ),
-          const SizedBox(width: 2),
+          const SizedBox(width: 3),
           Text(
             author,
             style: TextStyle(
               color: Colors.blue[700],
-              fontSize: 8,
+              fontSize: 10,
               fontWeight: FontWeight.w600,
             ),
             overflow: TextOverflow.ellipsis,
@@ -1357,25 +1372,25 @@ class _ArticlesListPageState extends State<ArticlesListPage> {
   // Helper method untuk media chip di grid
   Widget _buildMediaChipGrid(String mediaName) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
       decoration: BoxDecoration(
         color: Colors.green.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(10),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(
             Icons.business,
-            size: 10,
+            size: 12,
             color: Colors.green[700],
           ),
-          const SizedBox(width: 2),
+          const SizedBox(width: 3),
           Text(
             mediaName,
             style: TextStyle(
               color: Colors.green[700],
-              fontSize: 8,
+              fontSize: 10,
               fontWeight: FontWeight.w600,
             ),
             overflow: TextOverflow.ellipsis,
