@@ -1116,7 +1116,7 @@ class _ArticlesListPageState extends State<ArticlesListPage> {
           sliver: SliverGrid(
             gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
               crossAxisCount: 2,
-              childAspectRatio: 0.8,
+              childAspectRatio: 0.65,
               crossAxisSpacing: 8,
               mainAxisSpacing: 8,
             ),
@@ -1201,24 +1201,18 @@ class _ArticlesListPageState extends State<ArticlesListPage> {
               await _search();
             },
             borderRadius: BorderRadius.circular(8),
-            child: Container(
-              constraints: const BoxConstraints(maxHeight: 200),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Image section
-                  if (thumbnail != null) ...[
-                    Expanded(
-                      flex: 3,
-                      child: ClipRRect(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Image section
+                Expanded(
+                  flex: 3,
+                  child: thumbnail != null
+                    ? ClipRRect(
                         borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
                         child: thumbnail,
-                      ),
-                    ),
-                  ] else ...[
-                    Expanded(
-                      flex: 3,
-                      child: Container(
+                      )
+                    : Container(
                         decoration: BoxDecoration(
                           color: DS.surface,
                           borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
@@ -1232,61 +1226,59 @@ class _ArticlesListPageState extends State<ArticlesListPage> {
                           ),
                         ),
                       ),
-                    ),
-                  ],
-                  // Content section
-                  Expanded(
-                    flex: 2,
-                    child: Padding(
-                      padding: const EdgeInsets.all(8),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          // Title
-                          Text(
-                            displayTitle,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
+                ),
+                // Content section
+                Expanded(
+                  flex: 2,
+                  child: Padding(
+                    padding: const EdgeInsets.all(8),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Title
+                        Text(
+                          displayTitle,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontWeight: FontWeight.w600,
+                            fontSize: 14,
+                            color: DS.text,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        // Subtitle
+                        Text(
+                          subtitle,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: DS.textDim,
+                          ),
+                        ),
+                        const Spacer(),
+                        // Media type indicator
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: ac.withValues(alpha: 0.1),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(
+                            _getMediaDisplay(type),
                             style: TextStyle(
-                              fontWeight: FontWeight.w600,
-                              fontSize: 14,
-                              color: DS.text,
+                              fontSize: 10,
+                              color: ac,
+                              fontWeight: FontWeight.w500,
                             ),
                           ),
-                          const SizedBox(height: 4),
-                          // Subtitle
-                          Text(
-                            subtitle,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: DS.textDim,
-                            ),
-                          ),
-                          const Spacer(),
-                          // Media type indicator
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                            decoration: BoxDecoration(
-                              color: ac.withValues(alpha: 0.1),
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: Text(
-                              _getMediaDisplay(type),
-                              style: TextStyle(
-                                fontSize: 10,
-                                color: ac,
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
+                        ),
+                      ],
                     ),
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
           ),
         );
