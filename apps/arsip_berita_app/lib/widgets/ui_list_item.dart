@@ -31,78 +31,84 @@ class UiListItem extends StatelessWidget {
       child: Container(
         decoration: BoxDecoration(color: DS.surface, borderRadius: DS.br, border: Border.all(color: DS.border)),
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Kolom 1: Gambar (full height)
-            if (leading != null) ...[
-              ClipRRect(
-                borderRadius: BorderRadius.circular(8),
-                child: SizedBox(
-                  width: 80,
-                  height: 80,
-                  child: FittedBox(
-                    fit: BoxFit.cover,
-                    child: leading
-                  )
-                )
-              ),
-              const SizedBox(width: 12),
-            ],
-            // Kolom 2: Konten (judul + chips)
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Baris 1: Judul
-                  Text(
-                    title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontWeight: FontWeight.w700,
-                      fontSize: 16,
-                      color: DS.text
+        child: IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // Kolom 1: Gambar (full height)
+              if (leading != null) ...[
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: SizedBox(
+                    width: 80,
+                    height: 80,
+                    child: FittedBox(
+                      fit: BoxFit.cover,
+                      child: leading
                     )
-                  ),
-                  const SizedBox(height: 4),
-                  // Baris 2: Tanggal
-                  if (publishedAt != null) ...[
+                  )
+                ),
+                const SizedBox(width: 12),
+              ],
+              // Kolom 2: Konten (judul + chips dengan tinggi sama)
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    // Baris 1: Judul - tepat di atas
                     Text(
-                      _formatDate(publishedAt!),
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: DS.textDim,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                  ],
-                  // Baris 3: Chips
-                  if (authors != null && authors!.isNotEmpty || mediaName != null) ...[
-                    Wrap(
-                      spacing: 6,
-                      runSpacing: 4,
-                      children: [
-                        // Author chips (max 2)
-                        if (authors != null && authors!.isNotEmpty)
-                          ...authors!.take(2).map((author) => _buildAuthorChip(author)),
-                        // Media name chip
-                        if (mediaName != null && mediaName!.isNotEmpty)
-                          _buildMediaChip(mediaName!),
-                      ],
-                    ),
-                  ] else ...[
-                    Text(
-                      subtitle,
-                      maxLines: 2,
+                      title,
+                      maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: TextStyle(color: DS.textDim),
+                      style: TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 16,
+                        color: DS.text
+                      )
                     ),
+
+                    // Baris 2: Tanggal - di tengah
+                    if (publishedAt != null)
+                      Text(
+                        _formatDate(publishedAt!),
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: DS.textDim,
+                        ),
+                      )
+                    else
+                      const SizedBox.shrink(),
+
+                    // Baris 3: Chips - tepat di bawah
+                    if (authors != null && authors!.isNotEmpty || mediaName != null) ...[
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 4,
+                        children: [
+                          // Author chips (max 2)
+                          if (authors != null && authors!.isNotEmpty)
+                            ...authors!.take(2).map((author) => _buildAuthorChip(author)),
+                          // Media name chip
+                          if (mediaName != null && mediaName!.isNotEmpty)
+                            _buildMediaChip(mediaName!),
+                        ],
+                      ),
+                    ] else ...[
+                      // Jika tidak ada chips, tampilkan subtitle di posisi tengah
+                      if (publishedAt == null)
+                        Text(
+                          subtitle,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(color: DS.textDim),
+                        ),
+                    ],
                   ],
-                ],
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

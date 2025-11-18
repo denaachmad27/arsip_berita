@@ -42,7 +42,7 @@ class _ArticlesListPageState extends State<ArticlesListPage> {
   int _statMonth = 0;
 
   // Pagination
-  static const int _pageSize = 7;
+  static const int _pageSize = 50;
   int _currentPage = 0;
   bool _isLoadingMore = false;
   bool _hasMore = true;
@@ -1114,6 +1114,7 @@ class _ArticlesListPageState extends State<ArticlesListPage> {
     return CustomScrollView(
       controller: _scrollController,
       slivers: [
+        // Grid items
         SliverPadding(
           padding: const EdgeInsets.all(4),
           sliver: SliverGrid(
@@ -1125,39 +1126,49 @@ class _ArticlesListPageState extends State<ArticlesListPage> {
             ),
             delegate: SliverChildBuilderDelegate(
               (context, index) {
-                // Handle load more
-                if (index == _results.length) {
-                  if (_isLoadingMore) {
-                    return const Padding(
-                      padding: EdgeInsets.all(16),
-                      child: Center(
-                        child: CircularProgressIndicator(),
-                      ),
-                    );
-                  }
-
-                  if (_hasMore) {
-                    return Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Center(
-                        child: UiButton(
-                          label: 'Muat Lebih Banyak',
-                          icon: Icons.refresh,
-                          onPressed: _loadMore,
-                        ),
-                      ),
-                    );
-                  }
-
-                  return const SizedBox.shrink();
-                }
-
                 return _buildArticleGridItem(_results[index]);
               },
-              childCount: _results.length + (_hasMore || _isLoadingMore ? 1 : 0),
+              childCount: _results.length,
             ),
           ),
         ),
+
+        // Load More section as full-width row
+        if (_hasMore || _isLoadingMore)
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+              child: _isLoadingMore
+                  ? Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          SizedBox(
+                            width: 24,
+                            height: 24,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2.5,
+                              valueColor: AlwaysStoppedAnimation<Color>(DS.accent),
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          Text(
+                            'Memuat artikel...',
+                            style: Theme.of(context)
+                                .textTheme
+                                .bodySmall
+                                ?.copyWith(color: DS.textDim),
+                          ),
+                        ],
+                      ),
+                    )
+                  : UiButton(
+                      label: 'Muat Lebih Banyak',
+                      icon: Icons.refresh,
+                      onPressed: _loadMore,
+                    ),
+            ),
+          ),
       ],
     );
   }
