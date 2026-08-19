@@ -10,6 +10,7 @@ import 'package:flutter_quill_delta_from_html/flutter_quill_delta_from_html.dart
 
 import '../../data/local/db.dart';
 import '../../services/metadata_extractor.dart';
+import '../../services/samsung_notes_parser.dart';
 import '../../ui/design.dart';
 import '../../ui/theme.dart';
 import '../../util/platform_io.dart';
@@ -176,6 +177,7 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
   DateTime? _date;
   bool _loading = false;
   bool _extracting = false;
+  bool _importing = false;
   String? _canonical;
   String? _error;
   String? _titleError;
@@ -1235,6 +1237,110 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
     }
   }
 
+  Future<void> _importFromDevice() async {
+    final result = await FilePicker.platform.pickFiles(
+      allowMultiple: false,
+      type: FileType.custom,
+      allowedExtensions: const ['sdocx'],
+      withData: true,
+      dialogTitle: 'Pilih file Samsung Notes (.sdocx)',
+    );
+    if (result == null || result.files.isEmpty) return;
+
+    setState(() {
+      _extracting = true;
+      _importing = true;
+      _error = null;
+    });
+
+    try {
+      final picked = result.files.first;
+      final bytes = picked.bytes ??
+          (picked.path != null ? await File(picked.path!).readAsBytes() : null);
+      if (bytes == null) {
+        throw Exception('Gagal membaca file. Pastikan file dapat diakses.');
+      }
+
+      final doc = SamsungNotesParser().parse(bytes);
+      final text = doc.text.trim();
+      if (text.isEmpty && doc.images.isEmpty) {
+        throw Exception(
+          'Tidak ada teks ketikan maupun gambar yang bisa diimpor dari file ini.',
+        );
+      }
+
+      final importedItems = <String>[];
+
+      // Judul: baris teks pertama, fallback nama file
+      if (_title.text.trim().isEmpty) {
+        String? title;
+        if (text.isNotEmpty) {
+          final firstLine = text
+              .split('\n')
+              .map((line) => line.trim())
+              .where((line) => line.isNotEmpty)
+              .firstOrNull;
+          if (firstLine != null) title = firstLine;
+        }
+        title ??= picked.name
+            .replaceAll(RegExp(r'\.sdocx$', caseSensitive: false), '')
+            .trim();
+        if (title.isNotEmpty) {
+          _title.text = title;
+          importedItems.add('Judul');
+        }
+      }
+
+      if (_date == null && doc.modifiedAt != null) {
+        setState(() {
+          _date = doc.modifiedAt;
+        });
+        importedItems.add('Tanggal');
+      }
+
+      final html = buildSamsungNotesHtml(doc);
+      if (html.isNotEmpty) {
+        await _loadHtmlIntoQuill(html);
+        importedItems.add('Konten');
+      }
+      if (doc.images.isNotEmpty && !importedItems.contains('Konten')) {
+        importedItems.add('Gambar');
+      }
+
+      if (mounted) {
+        UiToast.show(
+          context,
+          message: importedItems.isEmpty
+              ? 'Tidak ada konten yang bisa diimpor dari file'
+              : 'Berhasil diimpor: ${importedItems.join(", ")}',
+          type: importedItems.isEmpty ? ToastType.error : ToastType.success,
+          duration: const Duration(seconds: 3),
+        );
+      }
+    } catch (e) {
+      _error = e.toString();
+      if (mounted) {
+        var errorMessage = e.toString();
+        if (errorMessage.startsWith('Exception: ')) {
+          errorMessage = errorMessage.substring('Exception: '.length);
+        }
+        UiToast.show(
+          context,
+          message: 'Gagal mengimpor: $errorMessage',
+          type: ToastType.error,
+          duration: const Duration(seconds: 4),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _extracting = false;
+          _importing = false;
+        });
+      }
+    }
+  }
+
   Future<void> _save() async {
     try {
       setState(() {
@@ -1620,7 +1726,9 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
                         ),
                         const SizedBox(height: Spacing.md),
                         Text(
-                          'Mengekstrak konten artikel...',
+                          _importing
+                              ? 'Mengimpor file Samsung Notes...'
+                              : 'Mengekstrak konten artikel...',
                           style: Theme.of(context).textTheme.titleMedium?.copyWith(
                                 fontWeight: FontWeight.w600,
                               ),
@@ -1657,6 +1765,16 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
             suffix: _MagicWandButton(
               onTap: (_loading || _extracting) ? null : _extract,
               isLoading: _extracting,
+            ),
+          ),
+          const SizedBox(height: Spacing.sm),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: UiButton(
+              label: 'Import dari Perangkat',
+              icon: Icons.folder_open,
+              primary: false,
+              onPressed: (_loading || _extracting) ? null : _importFromDevice,
             ),
           ),
           const SizedBox(height: Spacing.md),
