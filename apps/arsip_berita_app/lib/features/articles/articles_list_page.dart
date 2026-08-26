@@ -17,6 +17,7 @@ import '../../widgets/ui_list_item.dart';
 import 'article_form_page.dart';
 import 'article_detail_page.dart';
 import 'database_info_dialog.dart';
+import 'samsung_notes_sync_dialog.dart';
 import '../settings/ai_settings_page.dart';
 
 class ArticlesListPage extends StatefulWidget {
@@ -538,6 +539,20 @@ class _ArticlesListPageState extends State<ArticlesListPage> {
                 ),
               ),
             ],
+          ),
+          const SizedBox(width: Spacing.sm),
+          IconButton(
+            tooltip: 'Sinkronisasi Samsung Notes',
+            icon: const Icon(Icons.sync),
+            onPressed: () async {
+              final imported = await showDialog<int>(
+                context: context,
+                builder: (_) => SamsungNotesSyncDialog(db: _db),
+              );
+              if (imported != null && imported > 0) {
+                await _search();
+              }
+            },
           ),
           const SizedBox(width: Spacing.sm),
           IconButton(
