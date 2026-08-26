@@ -10,6 +10,7 @@ import 'package:flutter_quill_delta_from_html/flutter_quill_delta_from_html.dart
 
 import '../../data/local/db.dart';
 import '../../services/metadata_extractor.dart';
+import '../../services/samsung_notes_import.dart';
 import '../../services/samsung_notes_parser.dart';
 import '../../ui/design.dart';
 import '../../ui/theme.dart';
@@ -42,15 +43,23 @@ class _ResizableImageState extends State<_ResizableImage> {
   String? _cachedUrl;
 
   Uint8List? _getImageBytes() {
-    if (widget.imageUrl.startsWith('data:image')) {
-      if (_cachedUrl == widget.imageUrl && _cachedBytes != null) {
+    final url = widget.imageUrl.trim();
+    if (url.startsWith('data:') || url.contains(';base64,')) {
+      if (_cachedUrl == url && _cachedBytes != null) {
         return _cachedBytes;
       }
       try {
-        final base64String = widget.imageUrl.split(',')[1];
-        final bytes = base64Decode(base64String);
+        final commaIndex = url.indexOf(',');
+        final base64String =
+            commaIndex != -1 ? url.substring(commaIndex + 1) : url;
+        var cleaned = base64String.replaceAll(RegExp(r'\s+'), '');
+        final pad = cleaned.length % 4;
+        if (pad != 0) {
+          cleaned += '=' * (4 - pad);
+        }
+        final bytes = base64Decode(cleaned);
         _cachedBytes = bytes;
-        _cachedUrl = widget.imageUrl;
+        _cachedUrl = url;
         return bytes;
       } catch (e) {
         return null;
@@ -80,7 +89,8 @@ class _ResizableImageState extends State<_ResizableImage> {
       );
     }
 
-    if (widget.imageUrl.startsWith('http')) {
+    if (widget.imageUrl.startsWith('http://') ||
+        widget.imageUrl.startsWith('https://')) {
       return Align(
         alignment: Alignment.centerLeft,
         child: SizedBox(
@@ -96,6 +106,30 @@ class _ResizableImageState extends State<_ResizableImage> {
         ),
       );
     }
+
+    String path = widget.imageUrl;
+    if (path.startsWith('file://')) {
+      path = path.substring(7);
+    }
+    try {
+      final file = File(path);
+      if (file.existsSync()) {
+        return Align(
+          alignment: Alignment.centerLeft,
+          child: SizedBox(
+            width: widget.width,
+            child: Image.file(
+              file,
+              fit: BoxFit.contain,
+              gaplessPlayback: true,
+              errorBuilder: (context, error, stackTrace) {
+                return const Icon(Icons.broken_image);
+              },
+            ),
+          ),
+        );
+      }
+    } catch (_) {}
 
     return const Icon(Icons.broken_image);
   }
@@ -119,17 +153,27 @@ class ImageEmbedBuilder extends EmbedBuilder {
     EmbedContext embedContext,
   ) {
     final embedValue = embedContext.node.value;
-    String imageUrl;
+    String imageUrl = '';
 
     // Extract image URL from various possible formats
     final data = embedValue.data;
     if (data is String) {
       imageUrl = data;
-    } else if (data is Map && data.containsKey('source')) {
-      imageUrl = data['source'] as String;
-    } else if (data is Map && data.containsKey('image')) {
-      imageUrl = data['image'] as String;
-    } else {
+    } else if (data is Map) {
+      if (data.containsKey('image') && data['image'] is String) {
+        imageUrl = data['image'] as String;
+      } else if (data.containsKey('source') && data['source'] is String) {
+        imageUrl = data['source'] as String;
+      } else if (data.containsKey('src') && data['src'] is String) {
+        imageUrl = data['src'] as String;
+      } else if (data.containsKey('url') && data['url'] is String) {
+        imageUrl = data['url'] as String;
+      } else if (data.containsKey('data') && data['data'] is String) {
+        imageUrl = data['data'] as String;
+      }
+    }
+
+    if (imageUrl.isEmpty) {
       return const Icon(Icons.broken_image);
     }
 
@@ -362,6 +406,7 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
     _activeImageWidth =
         _selectedImageSrc != null ? _imageWidths[_selectedImageSrc!] : null;
   }
+
   List<String> _collectDocumentImages([Document? document]) {
     final doc = document ?? _quillController.document;
     final result = <String>[];
@@ -388,10 +433,18 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
           final data = value.data;
           if (data is String) {
             yield data;
-          } else if (data is Map && data.containsKey('source')) {
-            yield data['source'] as String;
-          } else if (data is Map && data.containsKey('image')) {
-            yield data['image'] as String;
+          } else if (data is Map) {
+            if (data.containsKey('image') && data['image'] is String) {
+              yield data['image'] as String;
+            } else if (data.containsKey('source') && data['source'] is String) {
+              yield data['source'] as String;
+            } else if (data.containsKey('src') && data['src'] is String) {
+              yield data['src'] as String;
+            } else if (data.containsKey('url') && data['url'] is String) {
+              yield data['url'] as String;
+            } else if (data.containsKey('data') && data['data'] is String) {
+              yield data['data'] as String;
+            }
           }
         }
       }
@@ -425,7 +478,8 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
       final selection = _quillController.selection;
       if (selection.isCollapsed) {
         try {
-          final embed = getEmbedNode(_quillController, selection.start).value.value;
+          final embed =
+              getEmbedNode(_quillController, selection.start).value.value;
           if (embed is BlockEmbed && embed.type == BlockEmbed.imageType) {
             selectionImage = embed.data as String;
           }
@@ -480,10 +534,8 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
       return buffer.toString();
     }
     if (attrs.containsKey(Attribute.blockQuote.key)) {
-      final content = block.children
-          .whereType<Line>()
-          .map(_lineInlineHtml)
-          .join('<br/>');
+      final content =
+          block.children.whereType<Line>().map(_lineInlineHtml).join('<br/>');
       final body = content.isEmpty ? '&nbsp;' : content;
       return '<blockquote>$body</blockquote>';
     }
@@ -645,15 +697,24 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
   String _embedToHtml(Embed leaf) {
     final value = leaf.value;
     if (value.type == 'image') {
-      String src;
+      String src = '';
       final data = value.data;
       if (data is String) {
         src = data;
-      } else if (data is Map && data.containsKey('source')) {
-        src = data['source'] as String;
-      } else if (data is Map && data.containsKey('image')) {
-        src = data['image'] as String;
-      } else {
+      } else if (data is Map) {
+        if (data.containsKey('image') && data['image'] is String) {
+          src = data['image'] as String;
+        } else if (data.containsKey('source') && data['source'] is String) {
+          src = data['source'] as String;
+        } else if (data.containsKey('src') && data['src'] is String) {
+          src = data['src'] as String;
+        } else if (data.containsKey('url') && data['url'] is String) {
+          src = data['url'] as String;
+        } else if (data.containsKey('data') && data['data'] is String) {
+          src = data['data'] as String;
+        }
+      }
+      if (src.isEmpty) {
         return '';
       }
 
@@ -677,11 +738,9 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
   Map<String, double> _extractImageWidths(String html) {
     final result = <String, double>{};
     final imgTagRegex = RegExp(r'<img[^>]*>', caseSensitive: false);
-    final srcRegex =
-        RegExp("src=['\"]([^'\"]+)['\"]", caseSensitive: false);
-    final widthRegex = RegExp(
-        "width=['\"]([0-9]+(?:\\.[0-9]+)?)['\"]",
-        caseSensitive: false);
+    final srcRegex = RegExp("src=['\"]([^'\"]+)['\"]", caseSensitive: false);
+    final widthRegex =
+        RegExp("width=['\"]([0-9]+(?:\\.[0-9]+)?)['\"]", caseSensitive: false);
     for (final match in imgTagRegex.allMatches(html)) {
       final tag = match.group(0);
       if (tag == null) continue;
@@ -1009,7 +1068,8 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
         debugPrint('✅ Loaded from Delta JSON successfully');
         return;
       } catch (e) {
-        debugPrint('❌ Failed to load from Delta JSON: $e, falling back to HTML');
+        debugPrint(
+            '❌ Failed to load from Delta JSON: $e, falling back to HTML');
       }
     }
 
@@ -1037,8 +1097,9 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
       final file = res.files.single;
       setState(() {
         _pickedImageBytes = file.bytes;
-        _pickedImageExt =
-            (file.extension ?? '').isNotEmpty ? file.extension!.toLowerCase() : null;
+        _pickedImageExt = (file.extension ?? '').isNotEmpty
+            ? file.extension!.toLowerCase()
+            : null;
         _removeImage = false;
       });
     } catch (e) {
@@ -1080,7 +1141,8 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
       final meta = await svc.fetch(url);
 
       if (meta == null) {
-        throw Exception('Gagal mengakses URL. Pastikan URL valid dan dapat diakses.');
+        throw Exception(
+            'Gagal mengakses URL. Pastikan URL valid dan dapat diakses.');
       }
 
       // Track what was extracted
@@ -1118,7 +1180,9 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
       }
 
       // Extract cover image
-      if (_pickedImageBytes == null && meta.coverImageBytes != null && meta.coverImageBytes!.isNotEmpty) {
+      if (_pickedImageBytes == null &&
+          meta.coverImageBytes != null &&
+          meta.coverImageBytes!.isNotEmpty) {
         setState(() {
           _pickedImageBytes = meta.coverImageBytes;
           // Try to determine extension from URL
@@ -1271,24 +1335,22 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
 
       final importedItems = <String>[];
 
-      // Judul: baris teks pertama, fallback nama file
+      // Judul artikel adalah baris pertama yang dicetak di catatan.
       if (_title.text.trim().isEmpty) {
-        String? title;
-        if (text.isNotEmpty) {
-          final firstLine = text
-              .split('\n')
-              .map((line) => line.trim())
-              .where((line) => line.isNotEmpty)
-              .firstOrNull;
-          if (firstLine != null) title = firstLine;
-        }
-        title ??= picked.name
-            .replaceAll(RegExp(r'\.sdocx$', caseSensitive: false), '')
+        final title = text
+            .split(RegExp(r'\r?\n'))
+            .map((line) => line.trim())
+            .firstWhere((line) => line.isNotEmpty, orElse: () => '')
             .trim();
         if (title.isNotEmpty) {
           _title.text = title;
           importedItems.add('Judul');
         }
+      }
+
+      if (_mediaName.text.trim().isEmpty) {
+        _mediaName.text = 'Samsung Note';
+        importedItems.add('Nama Media');
       }
 
       if (_date == null && doc.modifiedAt != null) {
@@ -1298,14 +1360,21 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
         importedItems.add('Tanggal');
       }
 
-      final html = buildSamsungNotesHtml(doc);
-      if (html.isNotEmpty) {
-        await _loadHtmlIntoQuill(html);
-        importedItems.add('Konten');
+      if (doc.images.isNotEmpty) {
+        final firstImage = doc.images.first;
+        final ext = extFromMime(firstImage.mimeType);
+        setState(() {
+          _pickedImageBytes = firstImage.data;
+          _pickedImageExt = ext;
+          _removeImage = false;
+        });
+        importedItems.add('Gambar Cover');
       }
-      if (doc.images.isNotEmpty && !importedItems.contains('Konten')) {
-        importedItems.add('Gambar');
-      }
+
+      final delta = buildSamsungNotesDelta(doc);
+      final document = Document.fromDelta(delta);
+      _applyDocument(document);
+      importedItems.add('Konten');
 
       if (mounted) {
         UiToast.show(
@@ -1317,6 +1386,108 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
           duration: const Duration(seconds: 3),
         );
       }
+    } catch (e) {
+      _error = e.toString();
+      if (mounted) {
+        var errorMessage = e.toString();
+        if (errorMessage.startsWith('Exception: ')) {
+          errorMessage = errorMessage.substring('Exception: '.length);
+        }
+        UiToast.show(
+          context,
+          message: 'Gagal mengimpor: $errorMessage',
+          type: ToastType.error,
+          duration: const Duration(seconds: 4),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _extracting = false;
+          _importing = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _importBatchFromDevice() async {
+    final result = await FilePicker.platform.pickFiles(
+      allowMultiple: true,
+      type: FileType.custom,
+      allowedExtensions: const ['sdocx'],
+      withData: true,
+      dialogTitle: 'Pilih file Samsung Notes (.sdocx)',
+    );
+    if (result == null || result.files.isEmpty) return;
+    if (!mounted) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Import Banyak File'),
+        content: Text(
+          '${result.files.length} file .sdocx akan diimport menjadi artikel baru. '
+          'File yang pernah diimport akan dilewati otomatis. Lanjutkan?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Batal'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Import'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() {
+      _extracting = true;
+      _importing = true;
+      _error = null;
+    });
+
+    try {
+      await widget.db.init();
+      final sources = <SdocxImportSource>[];
+      for (final file in result.files) {
+        final bytes = file.bytes ??
+            (file.path != null ? await File(file.path!).readAsBytes() : null);
+        if (bytes != null) {
+          sources.add(SdocxImportSource(fileName: file.name, bytes: bytes));
+        }
+      }
+      if (sources.isEmpty) {
+        throw Exception('Gagal membaca file yang dipilih.');
+      }
+
+      final res =
+          await SamsungNotesImportService().importBatch(widget.db, sources);
+      if (!mounted) return;
+
+      final detailText = res.details.isEmpty
+          ? ''
+          : '\n\n${res.details.take(5).join('\n')}'
+              '${res.details.length > 5 ? '\n...' : ''}';
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Hasil Import'),
+          content: Text(
+            'Berhasil: ${res.imported}\n'
+            'Dilewati (sudah ada): ${res.skipped}\n'
+            'Gagal: ${res.failed}$detailText',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Tutup'),
+            ),
+          ],
+        ),
+      );
     } catch (e) {
       _error = e.toString();
       if (mounted) {
@@ -1394,7 +1565,8 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
 
       int? mediaId;
       if (_mediaName.text.trim().isNotEmpty) {
-        mediaId = await widget.db.upsertMedia(_mediaName.text.trim(), _mediaType);
+        mediaId =
+            await widget.db.upsertMedia(_mediaName.text.trim(), _mediaType);
       }
       final article = ArticleModel(
         id: _isEditing
@@ -1416,8 +1588,9 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
       if (_pickedImageBytes != null && _pickedImageBytes!.isNotEmpty) {
         try {
           final ext = (_pickedImageExt ?? 'jpg').replaceAll('.', '');
-          final savedPath =
-              await saveImageForArticle(article.id, _pickedImageBytes!, ext: ext);
+          final savedPath = await saveImageForArticle(
+              article.id, _pickedImageBytes!,
+              ext: ext);
           if (savedPath.isEmpty && kIsWeb) {
             throw Exception('Penyimpanan gambar belum didukung di Web.');
           }
@@ -1440,25 +1613,29 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
       await widget.db.upsertArticle(article);
 
       final authorIds = <int>[];
-      for (final name in _authorTags.map((e) => e.trim()).where((e) => e.isNotEmpty)) {
+      for (final name
+          in _authorTags.map((e) => e.trim()).where((e) => e.isNotEmpty)) {
         authorIds.add(await widget.db.upsertAuthorByName(name));
       }
       await widget.db.setArticleAuthors(article.id, authorIds);
 
       final peopleIds = <int>[];
-      for (final name in _peopleTags.map((e) => e.trim()).where((e) => e.isNotEmpty)) {
+      for (final name
+          in _peopleTags.map((e) => e.trim()).where((e) => e.isNotEmpty)) {
         peopleIds.add(await widget.db.upsertPersonByName(name));
       }
       await widget.db.setArticlePeople(article.id, peopleIds);
 
       final orgIds = <int>[];
-      for (final name in _orgTags.map((e) => e.trim()).where((e) => e.isNotEmpty)) {
+      for (final name
+          in _orgTags.map((e) => e.trim()).where((e) => e.isNotEmpty)) {
         orgIds.add(await widget.db.upsertOrganizationByName(name));
       }
       await widget.db.setArticleOrganizations(article.id, orgIds);
 
       final locIds = <int>[];
-      for (final name in _locationTags.map((e) => e.trim()).where((e) => e.isNotEmpty)) {
+      for (final name
+          in _locationTags.map((e) => e.trim()).where((e) => e.isNotEmpty)) {
         locIds.add(await widget.db.upsertLocationByName(name));
       }
       await widget.db.setArticleLocations(article.id, locIds);
@@ -1612,6 +1789,7 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
       });
     }
   }
+
   @override
   Widget build(BuildContext context) {
     return PopScope(
@@ -1626,128 +1804,134 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
       child: Scaffold(
         backgroundColor: DS.bg,
         body: Stack(
-        children: [
-          AbsorbPointer(
-            absorbing: _prefillInProgress || _extracting,
-            child: UiScaffold(
-              title: _isEditing ? 'Edit Artikel' : 'Tambah Artikel',
-              actions: [
-                UiButton(
-                  label: 'Simpan',
-                  icon: Icons.save,
-                  onPressed: _loading ? null : _save,
-                ),
-              ],
-              child: PageContainer(
-                child: SingleChildScrollView(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      _buildSourceSection(),
-                      const SizedBox(height: Spacing.lg),
-                      _buildMediaSection(context),
-                      const SizedBox(height: Spacing.lg),
-                      _buildContentSection(context),
-                      const SizedBox(height: Spacing.lg),
-                      _buildImageSection(context),
-                      const SizedBox(height: Spacing.lg),
-                      _buildTagSection(context),
-                      const SizedBox(height: Spacing.lg),
-                      if (_canonical != null)
-                        Text(
-                          'Canonical URL: $_canonical',
-                          style: Theme.of(context)
-                              .textTheme
-                              .bodySmall
-                              ?.copyWith(color: DS.textDim),
-                        ),
-                      if (_error != null)
-                        Padding(
-                          padding: const EdgeInsets.only(top: Spacing.sm),
-                          child: Text(
-                            _error!,
-                            style: const TextStyle(color: Colors.red),
+          children: [
+            AbsorbPointer(
+              absorbing: _prefillInProgress || _extracting,
+              child: UiScaffold(
+                title: _isEditing ? 'Edit Artikel' : 'Tambah Artikel',
+                actions: [
+                  UiButton(
+                    label: 'Simpan',
+                    icon: Icons.save,
+                    onPressed: _loading ? null : _save,
+                  ),
+                ],
+                child: PageContainer(
+                  child: SingleChildScrollView(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _buildSourceSection(),
+                        const SizedBox(height: Spacing.lg),
+                        _buildMediaSection(context),
+                        const SizedBox(height: Spacing.lg),
+                        _buildContentSection(context),
+                        const SizedBox(height: Spacing.lg),
+                        _buildImageSection(context),
+                        const SizedBox(height: Spacing.lg),
+                        _buildTagSection(context),
+                        const SizedBox(height: Spacing.lg),
+                        if (_canonical != null)
+                          Text(
+                            'Canonical URL: $_canonical',
+                            style: Theme.of(context)
+                                .textTheme
+                                .bodySmall
+                                ?.copyWith(color: DS.textDim),
                           ),
-                        ),
-                      const SizedBox(height: Spacing.xxl),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ),
-          if (_prefillInProgress)
-            Positioned.fill(
-              child: Container(
-                color: Colors.black.withValues(alpha: 0.6),
-                child: const Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      CircularProgressIndicator(),
-                      SizedBox(height: Spacing.md),
-                      Text(
-                        'Memuat konten artikel...',
-                        style: TextStyle(color: Colors.white, fontSize: 16),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          if (_extracting)
-            Positioned.fill(
-              child: Container(
-                color: Colors.black.withValues(alpha: 0.7),
-                child: Center(
-                  child: Container(
-                    padding: const EdgeInsets.all(32),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(16),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.2),
-                          blurRadius: 20,
-                          offset: const Offset(0, 10),
-                        ),
+                        if (_error != null)
+                          Padding(
+                            padding: const EdgeInsets.only(top: Spacing.sm),
+                            child: Text(
+                              _error!,
+                              style: const TextStyle(color: Colors.red),
+                            ),
+                          ),
+                        const SizedBox(height: Spacing.xxl),
                       ],
                     ),
+                  ),
+                ),
+              ),
+            ),
+            if (_prefillInProgress)
+              Positioned.fill(
+                child: Container(
+                  color: Colors.black.withValues(alpha: 0.6),
+                  child: const Center(
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        _SpinningMagicWand(
-                          color: Theme.of(context).primaryColor,
-                        ),
-                        const SizedBox(height: Spacing.lg),
-                        const SizedBox(
-                          width: 200,
-                          child: LinearProgressIndicator(),
-                        ),
-                        const SizedBox(height: Spacing.md),
+                        CircularProgressIndicator(),
+                        SizedBox(height: Spacing.md),
                         Text(
-                          _importing
-                              ? 'Mengimpor file Samsung Notes...'
-                              : 'Mengekstrak konten artikel...',
-                          style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                                fontWeight: FontWeight.w600,
-                              ),
-                        ),
-                        const SizedBox(height: Spacing.xs),
-                        Text(
-                          'Mohon tunggu sebentar',
-                          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                color: DS.textDim,
-                              ),
+                          'Memuat konten artikel...',
+                          style: TextStyle(color: Colors.white, fontSize: 16),
                         ),
                       ],
                     ),
                   ),
                 ),
               ),
-            ),
-        ],
-      ),
+            if (_extracting)
+              Positioned.fill(
+                child: Container(
+                  color: Colors.black.withValues(alpha: 0.7),
+                  child: Center(
+                    child: Container(
+                      padding: const EdgeInsets.all(32),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(16),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.2),
+                            blurRadius: 20,
+                            offset: const Offset(0, 10),
+                          ),
+                        ],
+                      ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          _SpinningMagicWand(
+                            color: Theme.of(context).primaryColor,
+                          ),
+                          const SizedBox(height: Spacing.lg),
+                          const SizedBox(
+                            width: 200,
+                            child: LinearProgressIndicator(),
+                          ),
+                          const SizedBox(height: Spacing.md),
+                          Text(
+                            _importing
+                                ? 'Mengimpor file Samsung Notes...'
+                                : 'Mengekstrak konten artikel...',
+                            style: Theme.of(context)
+                                .textTheme
+                                .titleMedium
+                                ?.copyWith(
+                                  fontWeight: FontWeight.w600,
+                                ),
+                          ),
+                          const SizedBox(height: Spacing.xs),
+                          Text(
+                            'Mohon tunggu sebentar',
+                            style: Theme.of(context)
+                                .textTheme
+                                .bodyMedium
+                                ?.copyWith(
+                                  color: DS.textDim,
+                                ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }
@@ -1768,14 +1952,17 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
             ),
           ),
           const SizedBox(height: Spacing.sm),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: UiButton(
-              label: 'Import dari Perangkat',
-              icon: Icons.folder_open,
-              primary: false,
-              onPressed: (_loading || _extracting) ? null : _importFromDevice,
-            ),
+          Wrap(
+            spacing: Spacing.sm,
+            runSpacing: Spacing.sm,
+            children: [
+              UiButton(
+                label: 'Import File',
+                icon: Icons.folder_open,
+                primary: false,
+                onPressed: (_loading || _extracting) ? null : _importFromDevice,
+              ),
+            ],
           ),
           const SizedBox(height: Spacing.md),
           UiInput(controller: _title, hint: 'Judul', errorText: _titleError),
@@ -1812,7 +1999,8 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
               'Jenis Media',
               _MediaTypeChips(
                 value: _mediaType,
-                onChanged: (value) => setState(() => _mediaType = value ?? 'online'),
+                onChanged: (value) =>
+                    setState(() => _mediaType = value ?? 'online'),
               ),
             ),
             const SizedBox(height: Spacing.md),
@@ -1828,7 +2016,8 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
                     borderRadius: DS.br,
                     border: Border.all(color: DS.border),
                   ),
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
                   child: Row(
                     children: [
                       const Icon(Icons.calendar_today, size: 18),
@@ -1903,7 +2092,8 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
                         focusNode: _quillFocusNode,
                         scrollController: _quillScrollController,
                         config: QuillEditorConfig(
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 16),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 16),
                           placeholder: 'Tulis konten artikel di sini...',
                           embedBuilders: [
                             ImageEmbedBuilder(
@@ -1949,7 +2139,8 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
                 onPressed: _pickImage,
               ),
               const SizedBox(width: Spacing.sm),
-              if ((_pickedImageBytes != null && _pickedImageBytes!.isNotEmpty) ||
+              if ((_pickedImageBytes != null &&
+                      _pickedImageBytes!.isNotEmpty) ||
                   ((_imagePath ?? '').isNotEmpty))
                 UiButton(
                   label: 'Hapus',
@@ -2002,8 +2193,10 @@ class _ArticleFormPageState extends State<ArticleFormPage> {
           else
             Text(
               'Belum ada gambar sampul',
-              style:
-                  Theme.of(context).textTheme.bodySmall?.copyWith(color: DS.textDim),
+              style: Theme.of(context)
+                  .textTheme
+                  .bodySmall
+                  ?.copyWith(color: DS.textDim),
             ),
         ],
       ),
@@ -2123,7 +2316,8 @@ class _MediaTypeChips extends StatelessWidget {
                 onTap: () => onChanged(t.$1),
                 borderRadius: BorderRadius.circular(20),
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                   decoration: BoxDecoration(
                     color: value == t.$1
                         ? ((t.$1 == 'online' || t.$1 == 'tv')
@@ -2137,7 +2331,9 @@ class _MediaTypeChips extends StatelessWidget {
                     t.$2,
                     style: TextStyle(
                       color: value == t.$1
-                          ? ((t.$1 == 'online' || t.$1 == 'tv') ? DS.accent : DS.accent2)
+                          ? ((t.$1 == 'online' || t.$1 == 'tv')
+                              ? DS.accent
+                              : DS.accent2)
                           : DS.text,
                     ),
                   ),
@@ -2171,7 +2367,8 @@ class _KindChips extends StatelessWidget {
               onTap: () => onChanged(k.$1),
               borderRadius: BorderRadius.circular(20),
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                 decoration: BoxDecoration(
                   color: value == k.$1 ? DS.accentLite : DS.surface,
                   borderRadius: BorderRadius.circular(20),
@@ -2231,7 +2428,8 @@ class _CompactQuillToolbarState extends State<_CompactQuillToolbar> {
     required IconData icon,
     required String tooltip,
   }) {
-    final isActive = widget.controller.getSelectionStyle().containsKey(attribute.key);
+    final isActive =
+        widget.controller.getSelectionStyle().containsKey(attribute.key);
     return _buildToolbarButton(
       icon: icon,
       tooltip: tooltip,
@@ -2309,12 +2507,48 @@ class _CompactQuillToolbarState extends State<_CompactQuillToolbar> {
         padding: const EdgeInsets.all(4),
         onSelected: _applyTextColor,
         itemBuilder: (context) => [
-          const PopupMenuItem(value: '#000000', child: Row(children: [Icon(Icons.circle, color: Color(0xFF000000), size: 16), SizedBox(width: 8), Text('Hitam')])),
-          const PopupMenuItem(value: '#ff0000', child: Row(children: [Icon(Icons.circle, color: Color(0xFFFF0000), size: 16), SizedBox(width: 8), Text('Merah')])),
-          const PopupMenuItem(value: '#0000ff', child: Row(children: [Icon(Icons.circle, color: Color(0xFF0000FF), size: 16), SizedBox(width: 8), Text('Biru')])),
-          const PopupMenuItem(value: '#008000', child: Row(children: [Icon(Icons.circle, color: Color(0xFF008000), size: 16), SizedBox(width: 8), Text('Hijau')])),
-          const PopupMenuItem(value: '#ff8c00', child: Row(children: [Icon(Icons.circle, color: Color(0xFFFF8C00), size: 16), SizedBox(width: 8), Text('Orange')])),
-          const PopupMenuItem(value: '#800080', child: Row(children: [Icon(Icons.circle, color: Color(0xFF800080), size: 16), SizedBox(width: 8), Text('Ungu')])),
+          const PopupMenuItem(
+              value: '#000000',
+              child: Row(children: [
+                Icon(Icons.circle, color: Color(0xFF000000), size: 16),
+                SizedBox(width: 8),
+                Text('Hitam')
+              ])),
+          const PopupMenuItem(
+              value: '#ff0000',
+              child: Row(children: [
+                Icon(Icons.circle, color: Color(0xFFFF0000), size: 16),
+                SizedBox(width: 8),
+                Text('Merah')
+              ])),
+          const PopupMenuItem(
+              value: '#0000ff',
+              child: Row(children: [
+                Icon(Icons.circle, color: Color(0xFF0000FF), size: 16),
+                SizedBox(width: 8),
+                Text('Biru')
+              ])),
+          const PopupMenuItem(
+              value: '#008000',
+              child: Row(children: [
+                Icon(Icons.circle, color: Color(0xFF008000), size: 16),
+                SizedBox(width: 8),
+                Text('Hijau')
+              ])),
+          const PopupMenuItem(
+              value: '#ff8c00',
+              child: Row(children: [
+                Icon(Icons.circle, color: Color(0xFFFF8C00), size: 16),
+                SizedBox(width: 8),
+                Text('Orange')
+              ])),
+          const PopupMenuItem(
+              value: '#800080',
+              child: Row(children: [
+                Icon(Icons.circle, color: Color(0xFF800080), size: 16),
+                SizedBox(width: 8),
+                Text('Ungu')
+              ])),
         ],
       ),
       PopupMenuButton<String>(
@@ -2324,11 +2558,41 @@ class _CompactQuillToolbarState extends State<_CompactQuillToolbar> {
         padding: const EdgeInsets.all(4),
         onSelected: _applyBackgroundColor,
         itemBuilder: (context) => [
-          const PopupMenuItem(value: '#fff59d', child: Row(children: [Icon(Icons.circle, color: Color(0xFFFFF59D), size: 16), SizedBox(width: 8), Text('Kuning')])),
-          const PopupMenuItem(value: '#a5d6a7', child: Row(children: [Icon(Icons.circle, color: Color(0xFFA5D6A7), size: 16), SizedBox(width: 8), Text('Hijau Muda')])),
-          const PopupMenuItem(value: '#ffccbc', child: Row(children: [Icon(Icons.circle, color: Color(0xFFFFCCBC), size: 16), SizedBox(width: 8), Text('Orange Muda')])),
-          const PopupMenuItem(value: '#b3e5fc', child: Row(children: [Icon(Icons.circle, color: Color(0xFFB3E5FC), size: 16), SizedBox(width: 8), Text('Biru Muda')])),
-          const PopupMenuItem(value: '#f8bbd0', child: Row(children: [Icon(Icons.circle, color: Color(0xFFF8BBD0), size: 16), SizedBox(width: 8), Text('Pink Muda')])),
+          const PopupMenuItem(
+              value: '#fff59d',
+              child: Row(children: [
+                Icon(Icons.circle, color: Color(0xFFFFF59D), size: 16),
+                SizedBox(width: 8),
+                Text('Kuning')
+              ])),
+          const PopupMenuItem(
+              value: '#a5d6a7',
+              child: Row(children: [
+                Icon(Icons.circle, color: Color(0xFFA5D6A7), size: 16),
+                SizedBox(width: 8),
+                Text('Hijau Muda')
+              ])),
+          const PopupMenuItem(
+              value: '#ffccbc',
+              child: Row(children: [
+                Icon(Icons.circle, color: Color(0xFFFFCCBC), size: 16),
+                SizedBox(width: 8),
+                Text('Orange Muda')
+              ])),
+          const PopupMenuItem(
+              value: '#b3e5fc',
+              child: Row(children: [
+                Icon(Icons.circle, color: Color(0xFFB3E5FC), size: 16),
+                SizedBox(width: 8),
+                Text('Biru Muda')
+              ])),
+          const PopupMenuItem(
+              value: '#f8bbd0',
+              child: Row(children: [
+                Icon(Icons.circle, color: Color(0xFFF8BBD0), size: 16),
+                SizedBox(width: 8),
+                Text('Pink Muda')
+              ])),
         ],
       ),
       PopupMenuButton<String>(
@@ -2338,9 +2602,15 @@ class _CompactQuillToolbarState extends State<_CompactQuillToolbar> {
         padding: const EdgeInsets.all(4),
         onSelected: _applyFontSize,
         itemBuilder: (context) => [
-          const PopupMenuItem(value: 'small', child: Text('Kecil', style: TextStyle(fontSize: 12))),
-          const PopupMenuItem(value: 'large', child: Text('Sedang', style: TextStyle(fontSize: 16))),
-          const PopupMenuItem(value: 'huge', child: Text('Besar', style: TextStyle(fontSize: 20))),
+          const PopupMenuItem(
+              value: 'small',
+              child: Text('Kecil', style: TextStyle(fontSize: 12))),
+          const PopupMenuItem(
+              value: 'large',
+              child: Text('Sedang', style: TextStyle(fontSize: 16))),
+          const PopupMenuItem(
+              value: 'huge',
+              child: Text('Besar', style: TextStyle(fontSize: 20))),
         ],
       ),
     ];
@@ -2480,7 +2750,6 @@ class _CompactQuillToolbarState extends State<_CompactQuillToolbar> {
   }
 }
 
-
 class _CustomSelectionToolbar extends StatefulWidget {
   final QuillController controller;
   final ScrollController scrollController;
@@ -2491,7 +2760,8 @@ class _CustomSelectionToolbar extends StatefulWidget {
   });
 
   @override
-  State<_CustomSelectionToolbar> createState() => _CustomSelectionToolbarState();
+  State<_CustomSelectionToolbar> createState() =>
+      _CustomSelectionToolbarState();
 }
 
 class _CustomSelectionToolbarState extends State<_CustomSelectionToolbar> {
@@ -2571,12 +2841,8 @@ class _CustomSelectionToolbarState extends State<_CustomSelectionToolbar> {
         children: [
           Positioned(
             left: _toolbarPosition.dx,
-            top: _isToolbarVisible
-                ? null
-                : 8 + _toolbarPosition.dy,
-            bottom: _isToolbarVisible
-                ? 60 + _toolbarPosition.dy
-                : null,
+            top: _isToolbarVisible ? null : 8 + _toolbarPosition.dy,
+            bottom: _isToolbarVisible ? 60 + _toolbarPosition.dy : null,
             child: _buildToolbarContent(context),
           ),
         ],
@@ -2645,11 +2911,14 @@ class _CustomSelectionToolbarState extends State<_CustomSelectionToolbar> {
                 children: [
                   _buildButton(context, label: 'B', attribute: Attribute.bold),
                   const SizedBox(width: 8),
-                  _buildButton(context, label: 'I', attribute: Attribute.italic),
+                  _buildButton(context,
+                      label: 'I', attribute: Attribute.italic),
                   const SizedBox(width: 8),
-                  _buildButton(context, label: 'U', attribute: Attribute.underline),
+                  _buildButton(context,
+                      label: 'U', attribute: Attribute.underline),
                   const SizedBox(width: 8),
-                  _buildButton(context, label: 'S', attribute: Attribute.strikeThrough),
+                  _buildButton(context,
+                      label: 'S', attribute: Attribute.strikeThrough),
                   Container(
                     width: 1,
                     height: 24,
@@ -2668,7 +2937,8 @@ class _CustomSelectionToolbarState extends State<_CustomSelectionToolbar> {
     );
   }
 
-  Widget _buildButton(BuildContext context, {required String label, required Attribute attribute}) {
+  Widget _buildButton(BuildContext context,
+      {required String label, required Attribute attribute}) {
     final style = widget.controller.getSelectionStyle();
     final isActive = style.containsKey(attribute.key);
 
@@ -2710,7 +2980,8 @@ class _CustomSelectionToolbarState extends State<_CustomSelectionToolbar> {
     }
 
     return InkWell(
-      onTap: () => widget.controller.formatSelection(isActive ? Attribute.clone(attribute, null) : attribute),
+      onTap: () => widget.controller.formatSelection(
+          isActive ? Attribute.clone(attribute, null) : attribute),
       borderRadius: BorderRadius.circular(6),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -2723,7 +2994,8 @@ class _CustomSelectionToolbarState extends State<_CustomSelectionToolbar> {
     );
   }
 
-  Widget _buildIconButton(BuildContext context, IconData icon, String tooltip, VoidCallback onTap) {
+  Widget _buildIconButton(
+      BuildContext context, IconData icon, String tooltip, VoidCallback onTap) {
     return Tooltip(
       message: tooltip,
       child: InkWell(

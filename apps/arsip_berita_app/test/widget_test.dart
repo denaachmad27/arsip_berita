@@ -1,19 +1,47 @@
-// This is a basic Flutter widget test.
-//
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
+import 'dart:io';
 
 import 'package:arsip_berita_app/app.dart';
+import 'package:arsip_berita_app/features/articles/articles_list_page.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   testWidgets('App starts without crashing', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
+    sqfliteFfiInit();
+    databaseFactory = databaseFactoryFfi;
+    SharedPreferences.setMockInitialValues({});
+
+    final tempDir = Directory.systemTemp.createTempSync('arsip_widget_test_');
+    addTearDown(() => tempDir.deleteSync(recursive: true));
+
+    const channel = MethodChannel('plugins.flutter.io/path_provider');
+    tester.binding.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      switch (call.method) {
+        case 'getApplicationDocumentsDirectory':
+        case 'getApplicationSupportDirectory':
+        case 'getTemporaryDirectory':
+          return tempDir.path;
+      }
+      return null;
+    });
+    addTearDown(() => tester.binding.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, null));
+
     await tester.pumpWidget(const ArsipBeritaApp());
 
-    // Verify that the app starts
-    expect(find.byType(ArsipBeritaApp), findsOneWidget);
+    // Splash page shows first
+    expect(find.text('Arsip Berita App'), findsOneWidget);
+
+    // Advance past splash timer and let navigation settle
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.byType(ArticlesListPage), findsOneWidget);
   });
 }
